@@ -1,0 +1,81 @@
+# Guest functions replaced by host implementations (in host.c), for the v1.11 patch EBOOT (bin_v111/EBOOT.elf).
+# Addresses mapped from hooks_v100.txt (disc EBOOT) with re/scripts/map_addrs.py. Format: <hex address> <host function>
+# The translator emits f_<address> as a call to the host function instead of the guest body.
+
+# qTaskFunctionManager::OnSpuElfLoaded - binds a qTask function's SPU entry when its SPU program is
+# registered. Reimplemented on the host (same binding); the bound tasks then run their SPU code through
+# prehook_qtask_run (several PPU implementations are empty or incompatible stubs).
+1e4130 hook_qtask_on_spu_elf_loaded
+
+# Debug pre-hooks (host function runs first, then the original guest body):
+# lua_getfield / lua_gettable record (key, index, caller) per thread; the Lua panic handler dumps them.
+11448 prehook_lua_getfield pre
+113f8 prehook_lua_gettable pre
+14c18 prehook_lua_panic pre
+
+# qTask SPU launcher: (table, slot, spu job, task, ppu queue, manager, 0). Tasks that carry an SPU job
+# would start the SPU runner program (VA 0xF18580); queue them for the PPU workers instead.
+7cc470 hook_qtask_spu_launch
+
+# qTask runner: runs bound tasks' SPU functions on the SPU core; task statistics (MNR_QTASK_STATS=1)
+7c698c prehook_qtask_run pre
+
+# Havok SPU thread pool waitForCompletion (0xAEC180): waits once per SPU worker on a semaphore the SPU
+# tasks release. The SPU workers never run here and the calling thread has already processed the job
+# queue itself, so just clear the "waiting" flag.
+b04fc8 hook_havok_spu_wait
+
+# Asynchronous Havok physics job (0x482F8 adds it to the thread pool, 0x48468 waits for it): only the
+# SPU pool would process it. The byte at 0xECB74C enables that path; force it off before both.
+1c5678 prehook_async_physics_off pre
+1c57e8 prehook_async_physics_off pre
+
+# The game's debug printf (stubbed in the retail build, ~2900 call sites): MNR_GAME_LOG=1 prints it
+a59e0c prehook_game_printf pre
+
+# Render-queue geometry kernels (half the CPU time of a race): native versions in native.c, the originals kept
+# as f_<entry>_orig (MNR_NATIVE_VERIFY=1 compares, MNR_NATIVE_OFF=1 uses them)
+7c08f8 native_project_points native
+7c0aa8 native_cull_triangles native
+7c0f1c native_convert_verts native
+97a290 native_sincos native
+703f88 remix_check_track native
+7a8218 remix_check_kart native
+6ef134 remix_check_mod native
+
+# Voice chat (debug, MNR_VOICE_LOG=1): the chain that ends in cellVoiceInit (NetCodeVoipPlayer setup)
+8eb484 prehook_voice_a pre
+91c168 prehook_voice_b pre
+91b684 prehook_voice_c pre
+91aacc prehook_voice_d pre
+91a7f0 prehook_voice_e pre
+8ef6d0 prehook_voice_f pre
+8efc78 prehook_voice_g pre
+8f01fc prehook_voice_h pre
+8d7c84 prehook_voice_i pre
+8f4c7c prehook_vm_2 pre
+8eea38 prehook_vm_3 pre
+8ec31c prehook_vm_4 pre
+8ec0fc prehook_vm_5 pre
+8ec8a8 prehook_vm_6 pre
+8ebfa4 prehook_vm_8 pre
+8ebcfc prehook_vm_9 pre
+8e9be0 prehook_vm_10 pre
+8e9bb4 prehook_vm_11 pre
+8f3950 prehook_vm_12 pre
+8eb730 prehook_vm_13 pre
+8f1438 prehook_vm_14 pre
+8eafe4 prehook_vm_15 pre
+8eb684 prehook_vm_18 pre
+8eb608 prehook_vm_19 pre
+8eb58c prehook_vm_20 pre
+8ea508 prehook_vm_21 pre
+8eb460 prehook_vm_23 pre
+8ed314 prehook_vm_24 pre
+8eca18 prehook_vm_25 pre
+8ed630 prehook_vm_26 pre
+8ede90 prehook_vm_113 pre
+8edc5c prehook_vm_114 pre
+8eba74 prehook_vm_1113 pre
+8e991c prehook_vm_1114 pre
+8e947c prehook_vm_1115 pre

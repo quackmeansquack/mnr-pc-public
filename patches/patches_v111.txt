@@ -1,0 +1,12 @@
+# Data patches for the 1.11 EBOOT (BCUS98167 01.11, RPCS3 PPU-d0e40a676132671ac1777a6a8b38ccd8627d789f),
+# applied at boot by mnr.exe. One per line: <byte|be16|be32|bef32> <hex address> <value>. Comment out
+# (#) to turn one off. Code patches (addresses below 0xD53B78) are not supported: the code is recompiled.
+
+# Always 1280x720 (Margen67, Alexis): the game drops to 1024x600 when driving fast.
+be16 0x0137e642 1280
+be16 0x0137e646 720
+
+# Disable Customization Cache (ennuo): no cached kart/mod textures (RPCS3 issue 7365 on 1.11); slower loads.
+#byte 0x0137ef12 0
+#byte 0x014f5178 0
+#byte 0x014f5179 0

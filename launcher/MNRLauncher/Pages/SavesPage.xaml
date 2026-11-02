@@ -1,0 +1,35 @@
+<UserControl x:Class="MNRLauncher.Pages.SavesPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel Margin="32,28">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="Save profiles" Style="{StaticResource H1}"/>
+            <TextBlock Style="{StaticResource Sub}" Text="Keep separate saves and switch between them, like instances: a fresh game to test the intro, a copy of your career before trying something risky. The game uses the profile marked IN USE. Creations and mods are shared by all profiles."/>
+            <StackPanel Orientation="Horizontal" Margin="0,14,0,14">
+                <Button Content="New empty profile…" Click="New_Click"/>
+                <Button Content="Duplicate selected…" Click="Duplicate_Click"/>
+                <Button Content="Back up now" Click="Backup_Click"/>
+                <Button Content="Open backups" Click="OpenBackups_Click"/>
+            </StackPanel>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" Width="150" Margin="16,0,0,0">
+            <Button Content="Use this profile" Style="{StaticResource Primary}" Click="Use_Click" Margin="0,0,0,6"/>
+            <Button Content="Rename…" Click="Rename_Click" Margin="0,0,0,6"/>
+            <Button Content="Open folder" Click="Open_Click" Margin="0,0,0,6"/>
+            <Button Content="Delete" Click="Delete_Click" Margin="0,0,0,6"/>
+        </StackPanel>
+        <ListBox x:Name="List" MouseDoubleClick="Use_Click">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding Badge}" Foreground="{DynamicResource Good}" FontWeight="Bold" FontSize="11" VerticalAlignment="Center"/>
+                        <StackPanel>
+                            <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding Summary}" Style="{StaticResource Sub}"/>
+                        </StackPanel>
+                    </DockPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</UserControl>

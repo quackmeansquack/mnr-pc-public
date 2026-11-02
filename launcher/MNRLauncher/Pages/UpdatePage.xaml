@@ -1,0 +1,47 @@
+﻿<UserControl x:Class="MNRLauncher.Pages.UpdatePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32,28" MaxWidth="760" HorizontalAlignment="Left">
+            <TextBlock Text="Install &amp; updates" Style="{StaticResource H1}"/>
+            <TextBlock x:Name="Intro" Style="{StaticResource Sub}" TextWrapping="Wrap" Text="The game, the native build and this launcher come from the releases of your private GitHub repository. Only files that changed are downloaded."/>
+
+            <StackPanel x:Name="GithubPanel">
+            <TextBlock Text="GITHUB" Style="{StaticResource H2}"/>
+            <Grid HorizontalAlignment="Left">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="380"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                <TextBlock Text="Repository" VerticalAlignment="Center"/>
+                <TextBox x:Name="Repo" Grid.Column="1" Margin="0,2" ToolTip="owner/name, e.g. quack/mnr-pc"/>
+                <TextBlock Text="Access token" Grid.Row="1" VerticalAlignment="Center"/>
+                <PasswordBox x:Name="Token" Grid.Row="1" Grid.Column="1" Margin="0,2"/>
+            </Grid>
+            <TextBlock x:Name="TokenState" Style="{StaticResource Sub}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+            <TextBlock Style="{StaticResource Sub}" Margin="0,2,0,0" TextWrapping="Wrap" Text="Token: github.com &gt; Settings &gt; Developer settings &gt; Fine-grained tokens, access to this repository only, permission Contents: Read-only. It is stored encrypted for this Windows user."/>
+            </StackPanel>
+
+            <TextBlock Text="INSTALL FOLDER" Style="{StaticResource H2}"/>
+            <StackPanel Orientation="Horizontal">
+                <TextBox x:Name="Folder" Width="420"/>
+                <Button Content="Browse..." Click="Browse_Click" Margin="8,0,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="FolderState" Style="{StaticResource Sub}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                <Button x:Name="CheckButton" Content="Check for updates" Click="Check_Click" Margin="0,0,8,0"/>
+                <Button x:Name="ApplyButton" Content="Install / update" Style="{StaticResource Primary}" Click="Apply_Click" IsEnabled="False"/>
+                <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="8,0,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+            <ProgressBar x:Name="Bar" Height="10" Margin="0,14,0,0" Maximum="1000" Visibility="Collapsed"/>
+            <TextBlock x:Name="Status" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="Notes" Style="{StaticResource Sub}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+            <TextBlock Text="DLC" Style="{StaticResource H2}" Margin="0,24,0,0"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,4,0,0" Text="Install your own ModNation Racers DLC from its PS3 package (.pkg) files. Their license files (DRM-*.EDAT) are added to the game; the game's own files are never replaced. Put each DLC's license from your account (its .rap file, named after the content id, e.g. UP9000-BCUS98167_00-PMODNATION000010.rap) next to its package: the DLC is then unlocked. DLC of the EU, Asian or Japanese game works too."/>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="Install DLC package..." Click="InstallPkg_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="PkgStatus" Style="{StaticResource Sub}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,60 @@
+<UserControl x:Class="MNRLauncher.Pages.PlayPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Border x:Name="Art" Opacity="0.55"/>
+        <Border>
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#00000000" Offset="0.25"/>
+                    <GradientStop Color="{DynamicResource BgColor}" Offset="0.92"/>
+                </LinearGradientBrush>
+            </Border.Background>
+        </Border>
+
+        <!-- notices: the last session crashed; what the newest release brought -->
+        <StackPanel VerticalAlignment="Top" HorizontalAlignment="Left" Margin="40,24,40,0" MaxWidth="560">
+            <Border x:Name="CrashCard" Style="{StaticResource Card}" BorderBrush="{DynamicResource Warn}" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="The game crashed last time" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource Warn}"/>
+                    <TextBlock x:Name="CrashText" Style="{StaticResource Sub}" Margin="0,2,0,8"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Make bug report" Style="{StaticResource Primary}" Click="Report_Click"/>
+                        <Button Content="Dismiss" Click="Dismiss_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border x:Name="NewsCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock x:Name="NewsTitle" FontFamily="{StaticResource BodyFont}" FontSize="16" Foreground="{DynamicResource Accent}"/>
+                    <TextBlock x:Name="NewsText" Style="{StaticResource Sub}" FontSize="13" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <StackPanel VerticalAlignment="Bottom" Margin="40,0,40,32">
+            <TextBlock Text="ModNation Racers" FontFamily="{StaticResource TitleFont}" FontSize="52" Foreground="{DynamicResource Text}"/>
+            <TextBlock x:Name="Status" Style="{StaticResource Sub}" FontSize="13" Margin="2,0,0,14"/>
+            <WrapPanel Margin="0,0,0,16">
+                <StackPanel x:Name="AccountRow" Margin="0,0,16,0">
+                    <TextBlock Text="Playing as" Style="{StaticResource Sub}" Margin="2,0,0,4"/>
+                    <ComboBox x:Name="AccountPick" Width="220" DisplayMemberPath="DisplayName" SelectionChanged="AccountPick_Changed"/>
+                </StackPanel>
+                <StackPanel Margin="0,0,16,0">
+                    <TextBlock Text="Saves" Style="{StaticResource Sub}" Margin="2,0,0,4"/>
+                    <ComboBox x:Name="ProfilePick" Width="220" DisplayMemberPath="DisplayName" SelectionChanged="ProfilePick_Changed"/>
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock Text="Server" Style="{StaticResource Sub}" Margin="2,0,0,4"/>
+                    <ComboBox x:Name="ServerPick" Width="220" SelectionChanged="ServerPick_Changed"/>
+                </StackPanel>
+            </WrapPanel>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="PlayButton" Style="{StaticResource Primary}" Content="PLAY" FontFamily="{StaticResource TitleFont}" FontSize="24" Padding="56,8" Click="Play_Click"/>
+                <Button Content="Logs folder" Click="Logs_Click" VerticalAlignment="Center"/>
+                <Button Content="Game folder" Click="Folder_Click" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock x:Name="Problem" Foreground="{DynamicResource Warn}" TextWrapping="Wrap" Margin="0,14,0,0" Visibility="Collapsed"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

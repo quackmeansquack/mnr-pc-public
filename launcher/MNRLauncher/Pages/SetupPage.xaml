@@ -1,0 +1,44 @@
+<UserControl x:Class="MNRLauncher.Pages.SetupPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32,28" MaxWidth="780" HorizontalAlignment="Left">
+            <TextBlock Text="Set up the game" Style="{StaticResource H1}"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Text="The PC version is made from your own copy of ModNation Racers: the US disc (BCUS98167) and its 1.11 update. Point the launcher at your files below, then press Set up. It copies the disc, installs your update package, downloads the free C compiler (about 200 MB) and builds the game on this PC, once: about 10 to 30 minutes. About 20 GB of free space is needed."/>
+
+            <TextBlock Text="1. GAME DISC" Style="{StaticResource H2}"/>
+            <TextBlock x:Name="DiscState" TextWrapping="Wrap"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,2,0,0" Text="A decrypted disc image (.iso) of your disc, or the game folder from your disc dump (the one containing PS3_GAME)."/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBox x:Name="DiscSource" Width="430"/>
+                <Button Content="Disc image..." Click="PickIso_Click" Margin="8,0,0,0"/>
+                <Button Content="Game folder..." Click="PickDiscFolder_Click" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <TextBlock Text="2. UPDATE 1.11" Style="{StaticResource H2}"/>
+            <TextBlock x:Name="UpdateState" TextWrapping="Wrap"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,2,0,0" Text="Your copy of the 1.11 update package: UP9000-BCUS98167_00-MODNATIONKART002-A0111-V0200-PE.pkg (about 1.2 GB)."/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBox x:Name="UpdateSource" Width="430" ToolTip="UP9000-BCUS98167_00-MODNATIONKART002-A0111-V0200-PE.pkg"/>
+                <Button Content="Package..." Click="PickPkg_Click" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <TextBlock Text="3. VOICE CHAT (OPTIONAL)" Style="{StaticResource H2}"/>
+            <TextBlock x:Name="VoiceState" TextWrapping="Wrap"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,2,0,0" Text="Voice chat needs the voice codec from a PS3 system update file (PS3UPDAT.PUP). The disc carries one (PS3_UPDATE), so this is only needed if your copy doesn't have it: any PS3UPDAT.PUP from playstation.com works."/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBox x:Name="PupSource" Width="430"/>
+                <Button Content="System update..." Click="PickPup_Click" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                <Button x:Name="SetupButton" Content="Set up" Style="{StaticResource Primary}" Click="Setup_Click"/>
+                <Button x:Name="RebuildButton" Content="Rebuild the game" Click="Rebuild_Click" Margin="8,0,0,0" ToolTip="Build the PC version again (after an update of its source, or if its files were damaged)"/>
+                <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Margin="8,0,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+            <ProgressBar x:Name="Bar" Height="10" Margin="0,14,0,0" Maximum="1000" Visibility="Collapsed"/>
+            <TextBlock x:Name="Status" Margin="0,8,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="Log" Style="{StaticResource Sub}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- dotnet publish -p:Edition=Public: the public edition (the game from the player's own disc and update, built on their PC) -->
+  <PropertyGroup Condition="'$(Edition)' == 'Public'">
+    <DefineConstants>$(DefineConstants);PUBLIC_EDITION</DefineConstants>
+    <!-- its own intermediate and output folders: an incremental build must never mix the two editions' compiled code -->
+    <IntermediateOutputPath>obj\Public\$(Configuration)\</IntermediateOutputPath>
+    <OutputPath>bin\Public\$(Configuration)\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the exe/window icon ("MN" in the ModNation Title font) and the game's fonts, from the MNR Revival site -->
+    <Resource Include="app.ico" />
+    <Resource Include="Fonts\ModNationTitle.ttf" />
+    <Resource Include="Fonts\ModNationBody.ttf" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Fluent controls and theming (github.com/lepoco/wpfui) -->
+    <PackageReference Include="WPF-UI" Version="4.2.1" />
+  </ItemGroup>
+
+</Project>

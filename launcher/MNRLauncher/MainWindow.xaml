@@ -1,0 +1,45 @@
+<ui:FluentWindow x:Class="MNRLauncher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="ModNation Racers Launcher" Width="1100" Height="720" MinWidth="900" MinHeight="580"
+        Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="None" WindowCornerPreference="Round"
+        WindowStartupLocation="CenterScreen" Icon="pack://application:,,,/app.ico">
+    <Grid Background="{DynamicResource Bg}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition/>
+        </Grid.RowDefinitions>
+        <ui:TitleBar Title="ModNation Racers Launcher">
+            <ui:TitleBar.Icon><ui:ImageIcon Source="pack://application:,,,/app.ico"/></ui:TitleBar.Icon>
+        </ui:TitleBar>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220"/>
+                <ColumnDefinition/>
+            </Grid.ColumnDefinitions>
+            <Border Background="{DynamicResource Panel}">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Margin="22,8,22,18">
+                        <TextBlock Text="ModNation" FontFamily="{StaticResource TitleFont}" FontSize="30" Foreground="{DynamicResource Accent}"/>
+                        <TextBlock Text="RACERS · PC" FontFamily="{StaticResource BodyFont}" FontSize="15" Foreground="{DynamicResource SubText}"/>
+                    </StackPanel>
+                    <TextBlock x:Name="Version" DockPanel.Dock="Bottom" Margin="22,4,22,14" Style="{StaticResource Sub}"/>
+                    <RadioButton x:Name="NavUpdate" DockPanel.Dock="Bottom" Style="{StaticResource Nav}" Content="Updates" Tag="{x:Static ui:SymbolRegular.ArrowDownload24}" Checked="Nav_Checked" GroupName="nav"/>
+                    <RadioButton x:Name="NavSetup" DockPanel.Dock="Bottom" Style="{StaticResource Nav}" Content="Setup" Tag="{x:Static ui:SymbolRegular.Wrench24}" Checked="Nav_Checked" GroupName="nav" Visibility="Collapsed"/>
+                    <Button x:Name="UpdateNotice" DockPanel.Dock="Bottom" Style="{StaticResource Primary}" Margin="16,0,16,8" Visibility="Collapsed"
+                            Click="UpdateNotice_Click" HorizontalAlignment="Stretch"/>
+                    <StackPanel>
+                        <RadioButton x:Name="NavPlay" Style="{StaticResource Nav}" Content="Play" Tag="{x:Static ui:SymbolRegular.Play24}" Checked="Nav_Checked" GroupName="nav"/>
+                        <RadioButton x:Name="NavCreations" Style="{StaticResource Nav}" Content="Creations" Tag="{x:Static ui:SymbolRegular.VehicleCar24}" Checked="Nav_Checked" GroupName="nav"/>
+                        <RadioButton x:Name="NavMods" Style="{StaticResource Nav}" Content="Mods" Tag="{x:Static ui:SymbolRegular.PuzzlePiece24}" Checked="Nav_Checked" GroupName="nav"/>
+                        <RadioButton x:Name="NavProfiles" Style="{StaticResource Nav}" Content="Profiles" Tag="{x:Static ui:SymbolRegular.People24}" Checked="Nav_Checked" GroupName="nav"/>
+                        <RadioButton x:Name="NavSettings" Style="{StaticResource Nav}" Content="Settings" Tag="{x:Static ui:SymbolRegular.Settings24}" Checked="Nav_Checked" GroupName="nav"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+            <ContentControl x:Name="Page" Grid.Column="1"/>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>

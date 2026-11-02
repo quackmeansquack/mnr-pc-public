@@ -1,0 +1,63 @@
+<UserControl x:Class="MNRLauncher.Pages.AccountsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <DockPanel Margin="32,28">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="Accounts" Style="{StaticResource H1}"/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Text="Keep several RPCN accounts and switch between them. The game plays online as the account marked IN USE. An account can bring its own save profile with it, so each one keeps its own career."/>
+            <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource Line}" BorderThickness="1" Padding="14,10" Margin="0,14,0,14">
+                <StackPanel>
+                    <TextBlock Text="ADD AN ACCOUNT" Style="{StaticResource H2}" Margin="0,0,0,2"/>
+                    <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,0,0,6" Text="Have an RPCN account? Enter it and press Add account. New to RPCN? Fill in a user name, password and e-mail and press Create new account: RPCN e-mails a token; put it in the token field and press Add account."/>
+                    <Grid HorizontalAlignment="Left">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="280"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Text="RPCN user name" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NewUser" Grid.Column="1" Margin="0,2"/>
+                        <TextBlock Text="Password" Grid.Row="1" VerticalAlignment="Center"/>
+                        <PasswordBox x:Name="NewPassword" Grid.Row="1" Grid.Column="1" Margin="0,2"/>
+                        <TextBlock Text="E-mail token (if any)" Grid.Row="2" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NewToken" Grid.Row="2" Grid.Column="1" Margin="0,2"/>
+                        <TextBlock Text="RPCN server" Grid.Row="3" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NewHost" Grid.Row="3" Grid.Column="1" Margin="0,2"/>
+                        <TextBlock Text="E-mail (new account)" Grid.Row="4" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NewEmail" Grid.Row="4" Grid.Column="1" Margin="0,2"/>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Add account" Style="{StaticResource Primary}" Click="Add_Click" Margin="0,0,8,0"/>
+                        <Button Content="Create new account" Click="Create_Click" Margin="0,0,8,0"/>
+                        <Button Content="Import from RPCS3" Click="Import_Click"/>
+                        <TextBlock x:Name="AddStatus" Style="{StaticResource Sub}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="420"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" Width="190" Margin="16,0,0,0">
+            <Button Content="Use this account" Style="{StaticResource Primary}" Click="Use_Click" Margin="0,0,0,6"/>
+            <Button Content="Test sign-in" Click="Test_Click" Margin="0,0,0,6"/>
+            <Button Content="Resend e-mail token" Click="Resend_Click" Margin="0,0,0,6"/>
+            <TextBlock Text="Saves for this account" Style="{StaticResource Sub}" Margin="0,8,0,2"/>
+            <ComboBox x:Name="SaveFor" SelectionChanged="SaveFor_Changed" Margin="0,0,0,6"/>
+            <Button Content="Remove" Click="Remove_Click" Margin="0,8,0,6"/>
+            <TextBlock x:Name="Status" Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+        </StackPanel>
+        <Grid>
+            <ListBox x:Name="List" MouseDoubleClick="Use_Click" SelectionChanged="List_SelectionChanged">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Badge}" Foreground="{DynamicResource Good}" FontWeight="Bold" FontSize="11" VerticalAlignment="Center"/>
+                            <StackPanel>
+                                <TextBlock Text="{Binding DisplayName}" FontSize="14" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Summary}" Style="{StaticResource Sub}"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock x:Name="Empty" Style="{StaticResource Sub}" Text="No accounts yet: add one above, or import the one RPCS3 uses." HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Grid>
+    </DockPanel>
+    </ScrollViewer>
+</UserControl>
