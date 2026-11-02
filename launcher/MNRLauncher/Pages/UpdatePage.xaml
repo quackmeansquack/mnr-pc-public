@@ -17,7 +17,7 @@
                 <PasswordBox x:Name="Token" Grid.Row="1" Grid.Column="1" Margin="0,2"/>
             </Grid>
             <TextBlock x:Name="TokenState" Style="{StaticResource Sub}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-            <TextBlock Style="{StaticResource Sub}" Margin="0,2,0,0" TextWrapping="Wrap" Text="Token: github.com &gt; Settings &gt; Developer settings &gt; Fine-grained tokens, access to this repository only, permission Contents: Read-only. It is stored encrypted for this Windows user."/>
+            <TextBlock x:Name="TokenHelp" Style="{StaticResource Sub}" Margin="0,2,0,0" TextWrapping="Wrap" Text="Token: github.com &gt; Settings &gt; Developer settings &gt; Fine-grained tokens, access to this repository only, permission Contents: Read-only. It is stored encrypted for this Windows user."/>
             </StackPanel>
 
             <TextBlock Text="INSTALL FOLDER" Style="{StaticResource H2}"/>
@@ -37,7 +37,7 @@
             <TextBlock x:Name="Notes" Style="{StaticResource Sub}" Margin="0,8,0,0" TextWrapping="Wrap"/>
 
             <TextBlock Text="DLC" Style="{StaticResource H2}" Margin="0,24,0,0"/>
-            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,4,0,0" Text="Install your own ModNation Racers DLC from its PS3 package (.pkg) files. Their license files (DRM-*.EDAT) are added to the game; the game's own files are never replaced. Put each DLC's license from your account (its .rap file, named after the content id, e.g. UP9000-BCUS98167_00-PMODNATION000010.rap) next to its package: the DLC is then unlocked. DLC of the EU, Asian or Japanese game works too."/>
+            <TextBlock Style="{StaticResource Sub}" TextWrapping="Wrap" Margin="0,4,0,0" Text="Install your own ModNation Racers DLC from its PS3 package (.pkg) files. Their license files (DRM-*.EDAT) are added to the game; the game's own files are never replaced. Debug packages (for DLC) are also supported. Put each DLC's license from your account (its .rap file, named after the content id, e.g. UP9000-BCUS98167_00-PMODNATION000010.rap) next to its package: the DLC is then unlocked. DLC of the EU, Asian or Japanese game works too."/>
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                 <Button Content="Install DLC package..." Click="InstallPkg_Click"/>
             </StackPanel>

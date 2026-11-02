@@ -79,6 +79,7 @@ public partial class App : Application
                 System.Threading.Tasks.Task.Run(async () =>
                 {
                     MNRLauncher.Core.Paths.EnsureFolders();
+                    if (!MNRLauncher.Core.GameSetup.RuntimePresent) await MNRLauncher.Core.GameSetup.FetchRuntime(Rep, default);
                     await MNRLauncher.Core.GameSetup.InstallDisc(e.Args[1], Rep, default);
                     await MNRLauncher.Core.GameSetup.InstallUpdate(e.Args[2], Rep, default);
                     await MNRLauncher.Core.GameSetup.EnsureTools(Rep, default);

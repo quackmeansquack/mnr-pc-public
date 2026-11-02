@@ -1,8 +1,10 @@
 """Publish the public edition to its repository (default quackmeansquack/mnr-pc-public):
     python -I launcher\\publish_public.py [--notes "what changed"] [--repo owner/name] [--dry-run] [--no-source] [--keep-launcher]
 1. The repository's source (public_files.source_files(): the PC runtime's source, the recompiler, the function list,
-   the play profile, the data patches and the launcher's source) is committed and pushed (a clone kept in
-   launcher\\data\\public_repo). --no-source skips this.
+   the play profile, the data patches and the launcher's source) is committed and pushed. Run from the working folder
+   (a clone of the repository, e.g. Desktop\\Claude\\MNR-public), that folder itself is committed: the listed files
+   plus changes to files already in the repository; anything new beyond the list is only reported (add it with git).
+   Run from the full MNR folder, a clone in launcher\\data\\public_repo is used. --no-source skips this.
 2. A release: runtime.zip (public_files.runtime_files(), the files the launcher installs and builds the game from),
    the public-edition launcher (MNRLauncher.exe, built with -p:Edition=Public) and manifest.json, in the same format as
    the private releases, so the launcher's updater reads it unchanged.
@@ -26,7 +28,7 @@ A native Windows version of ModNation Racers (PS3, 1.11) made from your own copy
 
 This repository holds no game files and no game code. The launcher asks for:
 1. your **ModNation Racers disc** (US, BCUS98167): a decrypted disc image (.iso) or the game folder from your own dump;
-2. the **1.11 update** package (it can download it from PlayStation's update server);
+2. your **1.11 update** package (UP9000-BCUS98167_00-MODNATIONKART002-A0111-V0200-PE.pkg);
 3. optionally a **PS3 system update file** (PS3UPDAT.PUP) for voice chat, if your disc copy doesn't carry one.
 
 It then translates the game's own executable to C and builds the PC version on your PC with the free llvm-mingw
@@ -39,7 +41,9 @@ Download MNRLauncher.exe from the latest release and run it.
 - `re/functions_v111.tsv`: the game executable's function list; `re/mnr_race.profdata`: the build's play profile
 - `patches/patches_v111.txt`: data patches
 """
-GITIGNORE = "bin/\nobj/\n.vs/\n*.user\n"
+GITIGNORE = ("bin/\nobj/\n.vs/\n*.user\n__pycache__/\n"   # build output, and what a local game build or setup leaves
+             "launcher/app_public/\nlauncher/data/\nre/bin_v111/\nre/recomp/out_v111/\nre/shadercache/\ntools/\n"
+             "extracted/\nhdd0/\nfirmware/\nlogs/\nmods/\n*.iso\n*.pkg\n*.PUP\n*.rap\n*.edat\n*.EDAT\n")
 
 
 def build_launcher(version):
@@ -61,7 +65,30 @@ def git(*a, cwd=CLONE, check=True):
     return r.stdout.strip()
 
 
+def push_in_place(repo, tok, version, notes):
+    """ROOT is itself a clone of the repository (the working folder): commit and push it."""
+    url = f'https://x-access-token:{tok}@github.com/{repo}.git'
+    g = lambda *a, check=True: git(*a, cwd=ROOT, check=check)
+    for name, text in (('README.md', README), ('.gitignore', GITIGNORE)):
+        if not os.path.exists(os.path.join(ROOT, name)):   # (yours once they exist: not overwritten)
+            open(os.path.join(ROOT, name), 'w', newline='\n').write(text)
+    want = public_files.source_files() + ['README.md', '.gitignore']
+    g('add', '--', *want)
+    g('add', '-u')   # changed or deleted files already in the repository
+    extra = [l[3:] for l in g('status', '--porcelain').splitlines() if l.startswith('??')]
+    if extra:
+        print('not in the repository (add with git if they belong there):\n  ' + '\n  '.join(extra))
+    if not g('diff', '--cached', '--name-only'):
+        print('source: no changes')
+        return
+    g('-c', 'user.name=MNR PC', '-c', 'user.email=noreply@users.noreply.github.com', 'commit', '-m', f'v{version}' + (f': {notes}' if notes else ''))
+    g('push', url, 'HEAD')
+    print('source pushed')
+
+
 def push_source(repo, tok, version, notes):
+    if os.path.isdir(os.path.join(ROOT, '.git')):
+        return push_in_place(repo, tok, version, notes)
     url = f'https://x-access-token:{tok}@github.com/{repo}.git'
     if not os.path.isdir(os.path.join(CLONE, '.git')):
         os.makedirs(os.path.dirname(CLONE), exist_ok=True)

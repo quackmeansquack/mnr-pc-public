@@ -21,6 +21,7 @@ public partial class UpdatePage : UserControl, IRefresh
         Intro.Text = "The PC runtime's source and this launcher come from the releases of the public repository " + Updater.PublicRepo + ". After an update the game is rebuilt on this PC (Setup). The game itself comes from your own files (Setup).";
         Repo.IsReadOnly = true;
         TokenState.Visibility = Visibility.Collapsed;
+        TokenHelp.Text = "The access token is only needed while the repository is private (testing): a fine-grained token with Contents: Read-only on it. Leave it empty once the repository is public.";
 #endif
     }
 
@@ -155,7 +156,7 @@ public partial class UpdatePage : UserControl, IRefresh
                 if (!await Task.Run(() => PkgInstaller.IsDlc(f)))
                 { lines.Add($"{Path.GetFileName(f)}: not DLC (no licenses); a mod package goes in with Import on the Mods page."); continue; }
                 PkgStatus.Text = $"Installing {id}...";
-                var r = await Task.Run(() => PkgInstaller.Install(f, Paths.Hdd0));
+                var r = await Task.Run(() => PkgInstaller.Install(f, Paths.Hdd0, force: true));
                 lines.Add($"{r.ContentId}: {(r.Files > 0 ? $"{r.Files} file(s) added" : "already installed")}.");
             }
             catch (Exception ex) { lines.Add($"{Path.GetFileName(f)}: {ex.Message}"); }

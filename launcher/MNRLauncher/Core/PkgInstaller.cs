@@ -244,11 +244,11 @@ public static class PkgInstaller
         return Encoding.ASCII.GetString(h, 0x30, 0x30).TrimEnd('\0');
     }
 
-    public static Result Install(string pkgPath, string hdd0, bool listOnly = false)
+    public static Result Install(string pkgPath, string hdd0, bool listOnly = false, bool force = false)
     {
         var pkg = File.ReadAllBytes(pkgPath);
         if (pkg.Length < 0xC0 || U32(pkg, 0) != 0x7F504B47) throw new InvalidDataException("Not a PS3 package (no PKG header).");
-        if ((pkg[4] & 0x80) == 0) throw new InvalidDataException("This is a debug package (a mod): import it on the Mods page.");
+        if ((pkg[4] & 0x80) == 0 && !force) throw new InvalidDataException("This is a debug package (a mod): import it on the Mods page.");
         if ((pkg[6] << 8 | pkg[7]) != 1) throw new InvalidDataException("This isn't a PS3 package (PSP or other).");
         uint items = U32(pkg, 0x14);
         ulong total = U64(pkg, 0x18), dataOff = U64(pkg, 0x20), dataSize = U64(pkg, 0x28);
@@ -259,8 +259,10 @@ public static class PkgInstaller
         // ModNation Racers of any region (EU BCES00701 and BCES00764, Asia BCAS20112, Japan BCJS30040): its DLC licenses only list the
         // game's DRM keys, nothing regional, so they go to the installed (US) game's folder
         if (titleId is "BCES00701" or "BCES00764" or "BCAS20112" or "BCJS30040") titleId = "BCUS98167";
-        var iv = new byte[16]; Array.Copy(pkg, 0x70, iv, 0, 16);
-        var table = Decrypt(pkg, dataOff, iv, 0, (ulong)items * 32);
+        Func<ulong, ulong, byte[]> read;
+        if ((pkg[4] & 0x80) != 0) { var iv = new byte[16]; Array.Copy(pkg, 0x70, iv, 0, 16); read = (rel, len) => Decrypt(pkg, dataOff, iv, rel, len); }
+        else { var digest = pkg[0x60..0x70]; read = (rel, len) => DecryptDebug(pkg, dataOff, digest, rel, len); }
+        var table = read(0, (ulong)items * 32);
         var root = Path.GetFullPath(Path.Combine(hdd0, "game", titleId));
         var rapPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(pkgPath))!, contentId + ".rap");
         byte[]? rifKey = File.Exists(rapPath) && new FileInfo(rapPath).Length >= 16 ? RifKeyFromRap(File.ReadAllBytes(rapPath)) : null;
@@ -273,14 +275,14 @@ public static class PkgInstaller
             uint nameOff = U32(table, e), nameSize = U32(table, e + 4), flags = U32(table, e + 24);
             ulong off = U64(table, e + 8), size = U64(table, e + 16);
             if (nameOff + nameSize > dataSize || off + size > dataSize) throw new InvalidDataException("The package's file table is damaged.");
-            var name = Encoding.UTF8.GetString(Decrypt(pkg, dataOff, iv, nameOff, nameSize)).TrimEnd('\0').Replace('/', Path.DirectorySeparatorChar);
+            var name = Encoding.UTF8.GetString(read(nameOff, nameSize)).TrimEnd('\0').Replace('/', Path.DirectorySeparatorChar);
             var dest = Path.GetFullPath(Path.Combine(root, name));
             if (!dest.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException($"The package names a file outside its folder: {name}");
             if (listOnly) { Console.WriteLine($"{((flags & 0xFF) == 4 ? "dir " : size.ToString().PadLeft(8))}  {dest}{(File.Exists(dest) ? "  (exists)" : "")}"); continue; }
             if ((flags & 0xFF) == 4) { Directory.CreateDirectory(dest); continue; }
             // a DLC package also carries the game's PARAM.SFO, ICON0.PNG and PS3LOGO.DAT: the installed game's own (the 1.11
             // update's) stay; only files the game doesn't have yet are added (the DRM-*.EDAT licenses)
-            var content = Decrypt(pkg, dataOff, iv, off, size);
+            var content = read(off, size);
             // a license file with the account's .rap next to the package (<content id>.rap): installed decrypted, as the
             // PS3 hands it to the game when it opens it (the game reads it as XML)
             // the key: a free pack's license (type 3) uses the game's own; a bought one's (type 2) the account's .rap

@@ -4,7 +4,7 @@ A native Windows version of ModNation Racers (PS3, 1.11) made from your own copy
 
 This repository holds no game files and no game code. The launcher asks for:
 1. your **ModNation Racers disc** (US, BCUS98167): a decrypted disc image (.iso) or the game folder from your own dump;
-2. the **1.11 update** package (it can download it from PlayStation's update server);
+2. your **1.11 update** package (UP9000-BCUS98167_00-MODNATIONKART002-A0111-V0200-PE.pkg);
 3. optionally a **PS3 system update file** (PS3UPDAT.PUP) for voice chat, if your disc copy doesn't carry one.
 
 It then translates the game's own executable to C and builds the PC version on your PC with the free llvm-mingw
