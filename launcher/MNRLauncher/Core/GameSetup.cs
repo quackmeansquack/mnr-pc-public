@@ -10,18 +10,20 @@ using System.Threading.Tasks;
 
 namespace MNRLauncher.Core;
 
-/// <summary>The public edition's install: everything game-made comes from the player's own copy, and the PC build of the
-/// game is made on the player's PC.
-///   1. Disc: a decrypted disc image (.iso) or a disc folder (with PS3_GAME) -> extracted\ (PS3_GAME, PS3_UPDATE (the
-///      system update the game ships with: the voice chat codecs come from it), PS3_DISC.SFB). Only the US disc
-///      (BCUS98167) works: the build is made for its 1.11 update.
-///   2. The player's own 1.11 update package -> hdd0\game\BCUS98167\.
-///   3. Its EBOOT.BIN (encrypted) -> re\bin_v111\EBOOT.elf (SelfDecrypter), checked against the known 1.11 executable.
-///   4. Tools: llvm-mingw (the C compiler, github.com/mstorsjo/llvm-mingw) and Python (python.org's embeddable build),
-///      downloaded once into tools\ and checked against known hashes.
-///   5. Build: re\recomp\build.py translates EBOOT.elf to C and compiles it with the runtime (ThinLTO + the play profile
-///      re\mnr_race.profdata) into re\recomp\out_v111\mnr.exe; ~10 minutes on 12 threads.
-/// Each step is skipped when its result is already there, so an interrupted setup continues where it stopped.</summary>
+/// <summary>
+/// Complete installation pipeline for the public edition of ModNation Racers.
+///
+/// The PC version is built entirely from the player's own PS3 disc and update package.
+/// The pipeline has 5 stages, each skipped if its output already exists (resumable):
+///
+/// Stage 1 - Disc: Extracts a decrypted ISO or game folder into extracted\. Only the US disc (BCUS98167) works.
+/// Stage 2 - Update: Installs the 1.11 update .pkg into hdd0\game\BCUS98167\.
+/// Stage 3 - Executable: Decrypts the update's EBOOT.BIN into re\bin_v111\EBOOT.elf via SelfDecrypter.
+/// Stage 4 - Tools: Downloads llvm-mingw (C compiler) and Python (build script runtime) into tools\.
+/// Stage 5 - Build: Runs re\recomp\build.py to translate EBOOT.elf to C and compile mnr.exe (~10 min).
+///
+/// Each stage reports progress via the Report delegate and validates its inputs (checksums, content IDs).
+/// </summary>
 public static class GameSetup
 {
     const string EbootElfSha = "1da79f0955289357ec36a5684085009b549f1da8bb390e304d27dd7796d4c3b2";

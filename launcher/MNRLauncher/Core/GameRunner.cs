@@ -6,25 +6,41 @@ using System.Linq;
 
 namespace MNRLauncher.Core;
 
-/// <summary>Starts the native build with the launcher's settings turned into its environment switches.</summary>
+/// <summary>
+/// Launches the native Windows build (mnr.exe) with all settings applied as environment variables.
+///
+/// Responsibilities:
+/// - Validates that the game is installed and the CPU supports the required instructions (AVX2/Haswell).
+/// - Maps exit codes to human-readable error messages.
+/// - Builds the environment dictionary from Settings + enabled mods.
+/// - Starts mnr.exe with EBOOT.elf as boot parameter, captures output to logs.
+/// - Manages the RPCN ticket service for online play.
+/// </summary>
 public static class GameRunner
 {
     public static Process? Running { get; private set; }
     public static bool IsRunning => Running is { HasExited: false };
 
+    /// <summary>
+    /// Pre-flight validation: checks that the game is fully installed and the CPU supports the required instructions.
+    /// Returns a human-readable error message if anything is missing, or null if everything is fine.
+    /// </summary>
     public static string? Problem()
     {
         if (!File.Exists(Paths.GameExe)) return $"The game isn't installed in {Paths.Root} yet: open Install & updates.";
         if (!File.Exists(Paths.Eboot)) return $"The decrypted 1.11 EBOOT is missing:\n{Paths.Eboot}";
         if (!Directory.Exists(Paths.GameData)) return $"The game files are missing:\n{Paths.GameData}";
-        // builds before the universal one (no march.txt next to mnr.exe) need a Haswell-class processor
+        // Pre-universal builds (no march.txt beside mnr.exe) require a Haswell-class CPU
         if (Paths.GameExeMarch == "haswell" && CpuProblem() is string cpu) return cpu + "\n\nInstall & updates downloads the build for this processor.";
         return null;
     }
 
-
-    /// <summary>mnr.exe is compiled for Haswell-class processors (AVX2, FMA, BMI1/2, LZCNT, MOVBE: Intel Core 4th
-    /// generation (2013) and newer, AMD Excavator/Ryzen and newer); on older ones it stops at its first instruction.</summary>
+    /// <summary>
+    /// Checks whether the current CPU supports all x86 instruction sets required by the native build.
+    /// The build targets Haswell architecture: AVX2, FMA, BMI1, BMI2, LZCNT, MOVBE.
+    /// These map to Intel Core 4th gen (2013)+ or AMD Ryzen/Excavator/FX+.
+    /// Uses System.Runtime.Intrinsics to query CPUID at runtime.
+    /// </summary>
     public static string? CpuProblem()
     {
         var missing = new List<string>();
@@ -42,7 +58,11 @@ public static class GameRunner
             $"This processor lacks instructions the game build needs ({string.Join(", ", missing)}).\n\nThe build needs an Intel Core 4th generation (2013) or newer, or an AMD Ryzen / FX Excavator or newer.";
     }
 
-    /// <summary>What an early exit code means (the game shows no window when it stops this early).</summary>
+    /// <summary>
+    /// Maps Windows NTSTATUS/Win32 exit codes to human-readable explanations.
+    /// Covers CPU instruction missing, missing DLLs, access violations, stack overflows,
+    /// out-of-memory, and Direct3D 11 initialization failures.
+    /// </summary>
     public static string ExitMeaning(int code) => unchecked((uint)code) switch
     {
         0xC000001D => "The processor doesn't support an instruction the game uses (it needs AVX2: Intel Core 4th generation / AMD Ryzen or newer).",
@@ -58,17 +78,25 @@ public static class GameRunner
     /// <summary>Raised (on a worker thread) when the game exits within 20 s of starting: the explanation and the end of the log.</summary>
     public static event Action<string>? EarlyExit;
 
+    // Lazy-initialized RPCN ticket service. Created on first call to Tickets(), lives for the launcher's lifetime.
     static TicketService? tickets;
     static Settings? ticketSettings;
-    /// <summary>The local service that gives the game RPCN tickets (started on first use, kept for the launcher's life).</summary>
+
+    /// <summary>
+    /// Gets (or creates) the local RPCN ticket service. This service runs on a random local port and handles
+    /// PSN authentication by translating RPCN credentials into PSN tickets the game understands.
+    /// </summary>
     public static TicketService Tickets(Settings s)
     {
         ticketSettings = s;
         return tickets ??= new TicketService(() => (ticketSettings!.RpcnHost, ticketSettings.RpcnUser.Trim(), ticketSettings.RpcnPassword, ticketSettings.RpcnToken.Trim()));
     }
 
-    /// <summary>The server address as an IPv4 address: a name like mnr.quackcraft.net is looked up here (the game's
-    /// host map takes addresses); left as typed if it is already an address or the lookup fails.</summary>
+    /// <summary>
+    /// Resolves a server hostname to an IPv4 address. The game's host map (MNR_HOSTS) expects IP addresses,
+    /// not hostnames. If the input is already an IP, returns it unchanged. If DNS lookup fails, returns the
+    /// original string (the game may handle it).
+    /// </summary>
     static string ServerIp(string address)
     {
         if (System.Net.IPAddress.TryParse(address, out _)) return address;
@@ -80,6 +108,25 @@ public static class GameRunner
         catch (Exception) { return address; }
     }
 
+    /// <summary>
+    /// Builds the environment variable dictionary passed to mnr.exe. Each setting is converted into an MNR_*
+    /// environment variable that the native build reads at startup.
+    ///
+    /// Variables set here (all prefixed MNR_):
+    /// - MNR_HLE_LENIENT: Enable lenient syscall handling (always set to "1")
+    /// - MNR_SAVEDATA_DIR: Custom save profile folder
+    /// - MNR_FPS_CAP / MNR_NO_FPS: Frame rate and FPS display
+    /// - MNR_MUTE: Audio mute
+    /// - MNR_GAME_LOG / MNR_SAVEDATA_LOG: Detailed logging
+    /// - MNR_NO_XINPUT: Controller disable
+    /// - MNR_RESOLUTION / MNR_ANISO / MNR_FXAA: Graphics settings
+    /// - MNR_INPUT_CONFIG: Custom input mapping file
+    /// - MNR_MODS / MNR_MOD_PATCHES: Mod paths and patch files
+    /// - MNR_UNLOCK_TRACKS / MNR_ALLOW_REMIX: Game feature flags
+    /// - MNR_HOSTS: DNS host override (hostname=IP)
+    /// - MNR_NET / MNR_P2P_PORT / MNR_NET_LOG / MNR_P2P_LOG: Online networking
+    /// - MNR_NP_ID / MNR_NP_HELPER: RPCN authentication credentials
+    /// </summary>
     public static Dictionary<string, string> Environment(Settings s, IEnumerable<Mod> enabledMods)
     {
         var env = new Dictionary<string, string>
@@ -129,6 +176,20 @@ public static class GameRunner
         return env;
     }
 
+    /// <summary>
+    /// Starts the native game build (mnr.exe) with the given settings and enabled mods.
+    ///
+    /// Launch strategy:
+    /// - If KeepConsole is true and DetailedLog is false: the game runs with a visible console window
+    ///   (log output goes to the console + last_run.txt).
+    /// - Otherwise: the game runs with no console window; all output is captured to last_run.txt
+    ///   and flushed every 500ms to avoid blocking the game on busy logs.
+    ///
+    /// On exit:
+    /// - If the game exits within 20 seconds with a non-zero code, raises EarlyExit with a
+    ///   human-readable explanation and the last 12 lines of the log.
+    /// - Ends the RPCN ticket session when the game closes.
+    /// </summary>
     public static Process Start(Settings s, IEnumerable<Mod> enabledMods)
     {
         bool toFile = !s.KeepConsole || s.DetailedLog;   // a detailed log always goes to the file

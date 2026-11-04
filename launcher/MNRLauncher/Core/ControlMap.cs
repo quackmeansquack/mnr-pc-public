@@ -18,6 +18,7 @@ public class Binding
     public double Low { get; set; }
     public double High { get; set; } = 65535;
 
+    /// <summary>Describes this binding in human-readable form, resolving the device name from the connected devices list.</summary>
     public string Describe(IEnumerable<Joystick.Device> devices)
     {
         var dev = devices.FirstOrDefault(d => d.Key.Equals(Device, StringComparison.OrdinalIgnoreCase));
@@ -41,6 +42,7 @@ public static class ControlMap
 {
     public static string File => Path.Combine(Paths.LauncherData, "controls.cfg");
 
+    /// <summary>The complete list of PS3 controls the game uses, with launcher display names and grouping.</summary>
     public static readonly ControlDef[] Controls =
     {
         new("lx", "Steering (left stick left/right)", true, "Driving"),
@@ -65,7 +67,10 @@ public static class ControlMap
         new("ry", "Right stick up/down", true, "Buttons"),
     };
 
-    /// <summary>Wheel options (see re\recomp\input.c): rotation scaling and force feedback.</summary>
+    /// <summary>
+    /// Wheel configuration options passed to the game's input system: rotation degrees, steering lock/boost,
+    /// force feedback on/off, centring spring, and damper. All values match re\recomp\input.c.
+    /// </summary>
     public class WheelOptions
     {
         public double WheelDegrees { get; set; } = 900;   // the wheel's rotation, as set in its driver (G HUB: 900 for a G920)
@@ -76,6 +81,10 @@ public static class ControlMap
         public double Damper { get; set; } = 20;          // damper 0-100
     }
 
+    /// <summary>
+    /// Parses controls.cfg for wheel option values (wheel_degrees, steer_lock, steer_boost, ffb, ffb_spring, ffb_damper).
+    /// Returns a new WheelOptions with defaults if the file doesn't exist.
+    /// </summary>
     public static WheelOptions LoadOptions()
     {
         var o = new WheelOptions();
@@ -97,6 +106,10 @@ public static class ControlMap
         return o;
     }
 
+    /// <summary>
+    /// Parses controls.cfg for binding lines (control | device | kind | index | invert | deadzone | low | high).
+    /// Skips "option" lines and comments. Returns the list of parsed bindings.
+    /// </summary>
     public static List<Binding> Load()
     {
         var list = new List<Binding>();
@@ -118,6 +131,9 @@ public static class ControlMap
 
     public static void Save(List<Binding> list) => Save(list, LoadOptions());
 
+    /// <summary>
+    /// Writes all bindings and wheel options to controls.cfg. Format matches re\recomp\input.c.
+    /// </summary>
     public static void Save(List<Binding> list, WheelOptions o)
     {
         Directory.CreateDirectory(Paths.LauncherData);

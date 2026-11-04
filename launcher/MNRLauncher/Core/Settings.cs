@@ -5,54 +5,129 @@ using System.Text.Json;
 
 namespace MNRLauncher.Core;
 
-/// <summary>Launcher settings, saved as JSON in MNR\launcher\data\settings.json.</summary>
+/// <summary>
+/// Launcher configuration stored as JSON in MNR\launcher\data\settings.json.
+///
+/// This class is the single source of truth for all user-facing settings. It handles:
+/// - Persistence (Load/Save) with automatic migration for old formats.
+/// - DPAPI encryption for the RPCN password (tied to the current Windows user).
+/// - Versioned migrations (SettingsVersion) for backward compatibility.
+/// </summary>
 public class Settings
 {
-    // Game
-    public int FpsCap { get; set; } = 30;              // the console's cap; 60 is experimental
+    // ==================== Game Settings ====================
+    /// <summary>Frame rate cap. Default 30 matches the PS3 console; 60 is experimental and may cause stutter.</summary>
+    public int FpsCap { get; set; } = 30;
+
+    /// <summary>Show FPS overlay in the top-left corner of the game window.</summary>
     public bool ShowFps { get; set; } = true;
+
+    /// <summary>Mute all game audio (voices, music, SFX).</summary>
     public bool Mute { get; set; }
+
+    /// <summary>Enable XInput gamepad support. False disables controllers entirely.</summary>
     public bool UseController { get; set; } = true;
-    public bool KeepConsole { get; set; } = true;      // show the log console next to the game
-    public bool DetailedLog { get; set; }              // game + save messages to logs\last_run.txt (bug reports)
-    public bool UnlockAllTracks { get; set; }          // every career track unlocked (MNR_UNLOCK_TRACKS, host.c), for online races
-    public bool AllowRemix { get; set; } = true;       // the studios open downloaded creations whatever their creators chose (MNR_ALLOW_REMIX, native.c), to remix and republish
-    public string ExtraEnvironment { get; set; } = ""; // advanced: NAME=value per line
-    public string Theme { get; set; } = Themes.Default;   // the launcher's colours (Core\Themes.cs)
-    // Graphics (rsx_d3d.c)
-    public int Resolution { get; set; } = 720;            // the main scene's height: 720, 1080, 1440, 2160 (MNR_RESOLUTION)
-    public int Anisotropy { get; set; }                    // 0 off, 2..16 (MNR_ANISO)
-    public bool Fxaa { get; set; }                         // smoothed edges (MNR_FXAA)
-    public string CreationsServer { get; set; } = "";      // the server Data\Upload and Data\Download belong to (CreationSync)
-    public string CrashSeen { get; set; } = "";            // the crashed session's log the Play page's notice was dismissed for
-    public string LatestRelease { get; set; } = "";        // the newest release seen at start, and its notes (Play page: what's new)
+
+    /// <summary>Show the log console window alongside the game (useful for debugging).</summary>
+    public bool KeepConsole { get; set; } = true;
+
+    /// <summary>Enable detailed logging (game messages + save data logs) written to logs\last_run.txt.</summary>
+    public bool DetailedLog { get; set; }
+
+    /// <summary>Unlock every career track. Used for online races where tracks must be unlocked.</summary>
+    public bool UnlockAllTracks { get; set; }
+
+    /// <summary>Open any downloaded creation in the studios regardless of creator restrictions.</summary>
+    public bool AllowRemix { get; set; } = true;
+
+    /// <summary>Advanced: raw NAME=value pairs, one per line. Passed as environment variables to the game.</summary>
+    public string ExtraEnvironment { get; set; } = "";
+
+    /// <summary>UI theme for the launcher itself (see Core\Themes.cs for available themes).</summary>
+    public string Theme { get; set; } = Themes.Default;
+
+    // ==================== Graphics Settings (mapped to rsx_d3d.c on the PS3) ====================
+    /// <summary>Render resolution height. Options: 720 (default), 1080, 1440, 2160. Multiplies the PS3's internal resolution.</summary>
+    public int Resolution { get; set; } = 720;
+
+    /// <summary>Anisotropic filtering quality. 0 = off, 2-16 = higher quality (performance cost increases with value).</summary>
+    public int Anisotropy { get; set; }
+
+    /// <summary>Fast approximate anti-aliasing. Smooths jagged edges at minimal performance cost.</summary>
+    public bool Fxaa { get; set; }
+
+    // ==================== Online / Creation Sync ====================
+    /// <summary>Server hostname for creation upload/download (CreationSync protocol).</summary>
+    public string CreationsServer { get; set; } = "";
+
+    /// <summary>Filename of the crash log the user has already acknowledged on the Play page.</summary>
+    public string CrashSeen { get; set; } = "";
+
+    /// <summary>Latest GitHub release tag the user has seen at startup (used to suppress "what's new" dialog).</summary>
+    public string LatestRelease { get; set; } = "";
+
+    /// <summary>Release notes text for the LatestRelease tag.</summary>
     public string LatestNotes { get; set; } = "";
 
-    // Save profile in use ("" = the game's normal saves); see Profiles
+    // ==================== Save Profiles ====================
+    /// <summary>Active save profile name. Empty string = game's normal saves. Non-empty = isolated profile folder.</summary>
     public string ActiveProfile { get; set; } = "";
 
-    // Mods: folder names in load order (first wins when two mods replace the same file)
+    // ==================== Mod Management ====================
+    /// <summary>List of enabled mod folder names in load order. Earlier entries take priority when two mods replace the same file.</summary>
     public List<string> EnabledMods { get; set; } = new();
 
-    // Online
-    public string BrowserUrl { get; set; } = "https://mnrrevival.derole.net";   // creation browser (MNR Revival)
-    public string ServerHost { get; set; } = "modnation.ps3.playstationcloud.com";
-    public string ServerAddress { get; set; } = "mnr.quackcraft.net";   // our own server (MNR\server); the revival server is 45.32.179.33
-    public int SettingsVersion { get; set; }           // 1: the old default server address was moved to ours
-    public int CompositeCacheReset { get; set; }       // 1: the game's composite cache was cleared once (MainWindow)
-    public int ServerPort { get; set; }                // 0: the default HTTP port
-    public string PlayerName { get; set; } = "";
-    public bool OnlineEnabled { get; set; }            // sign in with RPCN and let the game reach the servers (MNR_NET)
-    public int RacePort { get; set; } = 3658;          // UDP port for online races (the console's 3658); two PCs on one network need different ones
-    public string RpcnHost { get; set; } = "np.rpcs3.net:31313";
-    public string RpcnUser { get; set; } = "";
-    public string RpcnPasswordProtected { get; set; } = "";   // RPCS3's derived password, encrypted for this Windows user (DPAPI)
-    public string RpcnToken { get; set; } = "";        // e-mail verification token (only if the server asks for one)
+    // ==================== Network / Online Settings ====================
+    /// <summary>URL for the creation browser (MNR Revival's web interface).</summary>
+    public string BrowserUrl { get; set; } = "https://mnrrevival.derole.net";
 
-    // Saved accounts (see Accounts): the one in use is copied into the RPCN fields above
+    /// <summary>DNS hostname that the game resolves for PSN services.</summary>
+    public string ServerHost { get; set; } = "modnation.ps3.playstationcloud.com";
+
+    /// <summary>IP/hostname the ServerHost resolves to. Default points to QuackCraft's own server.</summary>
+    public string ServerAddress { get; set; } = "mnr.quackcraft.net";
+
+    /// <summary>Settings file format version. Used for automatic migration (see Load()).</summary>
+    public int SettingsVersion { get; set; }
+
+    /// <summary>Flag: whether the game's composite cache was cleared once (set by MainWindow on first run).</summary>
+    public int CompositeCacheReset { get; set; }
+
+    /// <summary>HTTP port for the launcher's local server. 0 means use the default.</summary>
+    public int ServerPort { get; set; }
+
+    /// <summary>Player's display name (shown in online lobbies).</summary>
+    public string PlayerName { get; set; } = "";
+
+    /// <summary>Enable online mode: signs into RPCN and routes game traffic through the configured servers.</summary>
+    public bool OnlineEnabled { get; set; }
+
+    /// <summary>UDP port for peer-to-peer race traffic. Default 3658 matches the PS3 console. Different ports needed for multiple PCs on one network.</summary>
+    public int RacePort { get; set; } = 3658;
+
+    /// <summary>RPCN ticket service host (RPCS3's RPCN implementation). Format: host:port.</summary>
+    public string RpcnHost { get; set; } = "np.rpcs3.net:31313";
+
+    /// <summary>RPCN username for online play.</summary>
+    public string RpcnUser { get; set; } = "";
+
+    /// <summary>RPCN password encrypted with Windows DPAPI (CurrentUser scope). Stored in settings.json.</summary>
+    public string RpcnPasswordProtected { get; set; } = "";
+
+    /// <summary>Email verification token required by RPCN if the account hasn't been verified yet.</summary>
+    public string RpcnToken { get; set; } = "";
+
+    // ==================== Saved Accounts ====================
+    /// <summary>List of saved RPCN accounts. The active account's credentials are copied into the Rpcn* fields above.</summary>
     public List<Account> Accounts { get; set; } = new();
+
+    /// <summary>Identifier of the currently active saved account.</summary>
     public string ActiveAccount { get; set; } = "";
 
+    /// <summary>
+    /// Unencrypted RPCN password. Backed by DPAPI encryption/decryption via Protect/Unprotect.
+    /// Excluded from JSON serialization (JsonIgnore) since RpcnPasswordProtected holds the encrypted value.
+    /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string RpcnPassword
     {
@@ -60,9 +135,17 @@ public class Settings
         set => RpcnPasswordProtected = Protect(value);
     }
 
-    /// <summary>Encrypted for this Windows user (DPAPI); "" stays "".</summary>
+    /// <summary>
+    /// Encrypts a string using Windows DPAPI (CurrentUser scope). The encrypted value can only be decrypted
+    /// by the same Windows user on the same machine. Returns "" for null/empty input.
+    /// </summary>
     public static string Protect(string value) => string.IsNullOrEmpty(value) ? "" :
         Convert.ToBase64String(System.Security.Cryptography.ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(value), null, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+
+    /// <summary>
+    /// Decrypts a DPAPI-encrypted base64 string. Returns "" for null/empty input or if decryption fails
+    /// (e.g., the file was moved to another machine or the Windows user changed).
+    /// </summary>
     public static string Unprotect(string value)
     {
         if (string.IsNullOrEmpty(value)) return "";
@@ -70,6 +153,13 @@ public class Settings
         catch (Exception) { return ""; }
     }
 
+    /// <summary>
+    /// Loads settings from disk. Handles automatic migration for old file formats.
+    ///
+    /// Migration history:
+    /// - v0 → v1: Moved default server address from revival server (45.32.179.33) to QuackCraft's server.
+    /// - v1 → v2: Extracted MNR_RESOLUTION, MNR_ANISO, MNR_FXAA from ExtraEnvironment into typed Settings properties.
+    /// </summary>
     public static Settings Load()
     {
         try
@@ -77,12 +167,16 @@ public class Settings
             if (File.Exists(Paths.SettingsFile))
             {
                 var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(Paths.SettingsFile)) ?? new Settings();
-                if (s.SettingsVersion < 1)   // still on the old default (the revival server): move to ours, once
+
+                // Migration v0 → v1: update default server address
+                if (s.SettingsVersion < 1)
                 {
                     if (s.ServerAddress.Trim() == "45.32.179.33") s.ServerAddress = "mnr.quackcraft.net";
                     s.SettingsVersion = 1;
                 }
-                if (s.SettingsVersion < 2)   // graphics switches typed as extra environment lines become the Graphics settings, once
+
+                // Migration v1 → v2: convert legacy ExtraEnvironment graphics flags into typed properties
+                if (s.SettingsVersion < 2)
                 {
                     var keep = new List<string>();
                     foreach (var raw in s.ExtraEnvironment.Split('\n'))
@@ -97,13 +191,17 @@ public class Settings
                     s.ExtraEnvironment = string.Join("\r\n", keep);
                     s.SettingsVersion = 2;
                 }
+
                 return s;
             }
         }
-        catch (Exception) { /* a broken file falls back to defaults */ }
+        catch (Exception) { /* a corrupted settings file falls back to defaults */ }
         return new Settings();
     }
 
+    /// <summary>
+    /// Serialises settings to JSON and writes to the settings file. Creates the parent directory if needed.
+    /// </summary>
     public void Save()
     {
         Directory.CreateDirectory(Paths.LauncherData);

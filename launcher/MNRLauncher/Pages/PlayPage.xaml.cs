@@ -21,6 +21,8 @@ public partial class PlayPage : UserControl, IRefresh
         timer.Start();
     }
 
+    /// <summary>Updates the Play page UI: shows current settings, active accounts/profiles, server status,
+    /// crash notifications, release notes, and game running state.</summary>
     public void Refresh()
     {
         var s = MainWindow.Settings;
@@ -61,6 +63,7 @@ public partial class PlayPage : UserControl, IRefresh
     }
 
     bool loadingAccounts;
+    /// <summary>Switches to the selected account, showing a warning if the game is running.</summary>
     void AccountPick_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (loadingAccounts || AccountPick.SelectedItem is not Account a || a.Active) return;
@@ -73,6 +76,7 @@ public partial class PlayPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Switches to the selected save profile, showing a warning if the game is running.</summary>
     void ProfilePick_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (loadingAccounts || ProfilePick.SelectedItem is not Profile p || p.Active) return;
@@ -82,13 +86,16 @@ public partial class PlayPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Switches the online server address based on the selected server in the dropdown.</summary>
     void ServerPick_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (loadingAccounts || ServerPick.SelectedIndex < 0 || ServerPick.SelectedIndex >= OnlineSettings.Servers.Length) return;
         MainWindow.Settings.ServerAddress = OnlineSettings.Servers[ServerPick.SelectedIndex].address; MainWindow.Settings.Save();
     }
 
+    /// <summary>Creates and shows a bug report zip file.</summary>
     void Report_Click(object sender, RoutedEventArgs e) => BugReport.MakeAndShow();
+    /// <summary>Dismisses the crash notification by recording the crash file name.</summary>
     void Dismiss_Click(object sender, RoutedEventArgs e)
     {
         var c = BugReport.LastCrash();
@@ -96,6 +103,7 @@ public partial class PlayPage : UserControl, IRefresh
         CrashCard.Visibility = Visibility.Collapsed;
     }
 
+    /// <summary>Updates the Play button text and enabled state based on whether the game is running.</summary>
     void UpdateRunning()
     {
         bool running = GameRunner.IsRunning;
@@ -103,6 +111,8 @@ public partial class PlayPage : UserControl, IRefresh
         PlayButton.IsEnabled = !running && GameRunner.Problem() == null;
     }
 
+    /// <summary>Starts the game: synchronizes published creations with the server, checks for mod conflicts,
+    /// hooks the early-exit callback, and launches the game. Shows a dialog if the game crashes right after starting.</summary>
     async void Play_Click(object sender, RoutedEventArgs e)
     {
         var s = MainWindow.Settings;
@@ -125,6 +135,7 @@ public partial class PlayPage : UserControl, IRefresh
     }
 
     static bool earlyHooked;
+    /// <summary>Registers the early-exit callback once. Shows a dialog if the game crashes right after starting.</summary>
     void HookEarlyExit()
     {
         if (earlyHooked) return;
@@ -136,6 +147,8 @@ public partial class PlayPage : UserControl, IRefresh
         });
     }
 
+    /// <summary>Opens the logs folder in Windows Explorer.</summary>
     void Logs_Click(object sender, RoutedEventArgs e) { Directory.CreateDirectory(Paths.LogsDir); Process.Start("explorer.exe", Paths.LogsDir); }
+    /// <summary>Opens the install root folder in Windows Explorer.</summary>
     void Folder_Click(object sender, RoutedEventArgs e) => Process.Start("explorer.exe", Paths.Root);
 }

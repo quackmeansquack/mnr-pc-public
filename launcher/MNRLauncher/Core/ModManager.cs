@@ -34,6 +34,10 @@ public class Mod
     public string FilesDir => Path.Combine(Folder, "files");
     public string? Preview => File.Exists(Path.Combine(Folder, "preview.png")) ? Path.Combine(Folder, "preview.png") : null;
     public string DisplayName => string.IsNullOrWhiteSpace(Info.Name) ? Id : Info.Name;
+    /// <summary>
+    /// Formatted summary string combining author, version, file count, and patch availability.
+    /// Used in the launcher's mod list UI.
+    /// </summary>
     public string Summary
     {
         get
@@ -50,6 +54,10 @@ public class Mod
 
 public static class ModManager
 {
+    /// <summary>
+    /// Scans MNR\mods for mod folders, loading each mod.json and counting files.
+    /// Returns mods sorted with enabled mods first (in load order), then disabled mods alphabetically.
+    /// </summary>
     public static List<Mod> Scan(Settings settings)
     {
         Directory.CreateDirectory(Paths.ModsDir);
@@ -69,7 +77,10 @@ public static class ModManager
 
     static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
-    /// <summary>Unpacks a .mnrmod (zip) into MNR\mods. Returns the new mod's folder.</summary>
+    /// <summary>
+    /// Unpacks a .mnrmod zip archive into MNR\mods, stripping any common top-level folder.
+    /// Prevents path traversal (../) escapes. Returns the new mod's folder path.
+    /// </summary>
     public static string Import(string archive)
     {
         var name = SafeName(Path.GetFileNameWithoutExtension(archive));
@@ -99,7 +110,10 @@ public static class ModManager
         ZipFile.CreateFromDirectory(mod.Folder, archive, CompressionLevel.Optimal, false);
     }
 
-    /// <summary>Creates an empty mod skeleton (for mod makers).</summary>
+    /// <summary>
+    /// Creates an empty mod skeleton with mod.json, patches.txt template, and files\ directory.
+    /// Intended for mod makers as a starting point.
+    /// </summary>
     public static string CreateEmpty(string name, string author)
     {
         var dest = Unique(Path.Combine(Paths.ModsDir, SafeName(name)));
@@ -110,14 +124,20 @@ public static class ModManager
         return dest;
     }
 
-    /// <summary>The environment the game needs to load the enabled mods.</summary>
+    /// <summary>
+    /// Returns the MNR_MODS and MNR_PATCHES environment variables needed by the game to load enabled mods.
+    /// Mods are semicolon-separated paths; patches are semicolon-separated patch file paths.
+    /// </summary>
     public static (string mods, string patches) Environment(IEnumerable<Mod> enabledInOrder)
     {
         var list = enabledInOrder.ToList();
         return (string.Join(";", list.Select(m => m.Folder)), string.Join(";", list.Where(m => m.HasPatches).Select(m => m.PatchFile)));
     }
 
-    /// <summary>Files that more than one enabled mod replaces (the first in load order wins).</summary>
+    /// <summary>
+    /// Detects file conflicts: paths replaced by more than one enabled mod. Reports the first mod (in load order)
+    /// that wins for each conflicting path.
+    /// </summary>
     public static List<string> Conflicts(IEnumerable<Mod> enabledInOrder)
     {
         var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -135,6 +155,7 @@ public static class ModManager
         return conflicts;
     }
 
+    /// <summary>Sanitises a string for use as a folder name, replacing invalid characters with underscores.</summary>
     public static string SafeName(string s)
     {
         foreach (var c in Path.GetInvalidFileNameChars()) s = s.Replace(c, '_');
@@ -142,6 +163,7 @@ public static class ModManager
         return s.Length == 0 ? "mod" : s;
     }
 
+    /// <summary>Appends (2), (3), etc. to a path until an unused directory name is found.</summary>
     public static string Unique(string path)
     {
         if (!Directory.Exists(path) && !File.Exists(path)) return path;

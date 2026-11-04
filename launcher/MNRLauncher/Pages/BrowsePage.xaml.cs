@@ -10,6 +10,7 @@ namespace MNRLauncher.Pages;
 
 public partial class BrowsePage : UserControl, IRefresh
 {
+    /// <summary>A row in the creations list: a RemoteCreation with an optional thumbnail and display properties.</summary>
     public class Row
     {
         public RemoteCreation C { get; init; } = new();
@@ -31,7 +32,8 @@ public partial class BrowsePage : UserControl, IRefresh
         }
         public Visibility InstalledTag => InstalledCache.Contains(C.Id) ? Visibility.Visible : Visibility.Collapsed;
     }
-    static HashSet<int> InstalledCache = new();   // the page's creations that are in the game (read once per listing)
+    /// <summary>The page's cached set of creation IDs that are currently installed in the game.</summary>
+    static HashSet<int> InstalledCache = new();
 
     RevivalApi api = new(MainWindow.Settings);
     int page = 1, total;
@@ -40,6 +42,7 @@ public partial class BrowsePage : UserControl, IRefresh
 
     public BrowsePage() { InitializeComponent(); }
 
+    /// <summary>Refreshes the browse page: creates a new API client, updates the source description, and loads the listings asynchronously if not already loaded.</summary>
     public void Refresh()
     {
         api = new RevivalApi(MainWindow.Settings);
@@ -49,6 +52,7 @@ public partial class BrowsePage : UserControl, IRefresh
 
     string Type => TypeBox.SelectedIndex switch { 1 => "CHARACTER", 2 => "KART", 3 => "TRACK", _ => "ANY" };
 
+    /// <summary>Loads the creations listing: searches or fetches downloads based on the user's filters, checks installation status, and populates the UI.</summary>
     async Task Load()
     {
         Message.Text = "Loading…"; List.ItemsSource = null; Prev.IsEnabled = Next.IsEnabled = false;
@@ -73,6 +77,7 @@ public partial class BrowsePage : UserControl, IRefresh
         catch (Exception ex) { Message.Text = "Couldn't reach the server:\n" + ex.Message; }
     }
 
+    /// <summary>Loads an image from a URL with caching and decode pixel limit.</summary>
     static ImageSource? Image(string url)
     {
         try
@@ -89,12 +94,18 @@ public partial class BrowsePage : UserControl, IRefresh
     public int Columns { get => (int)GetValue(ColumnsProperty); set => SetValue(ColumnsProperty, value); }
     void List_SizeChanged(object sender, SizeChangedEventArgs e) => Columns = Math.Max(1, (int)((e.NewSize.Width - 20) / 200));
 
+    /// <summary>Triggers a search with the current query and filters, resetting to page 1.</summary>
     void Search_Click(object sender, RoutedEventArgs e) { page = 1; _ = Load(); }
+    /// <summary>Handles Enter key press in the query box to trigger a search.</summary>
     void Query_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (e.Key == System.Windows.Input.Key.Enter) { page = 1; _ = Load(); } }
+    /// <summary>Re-loads the listing when sort or type filters change.</summary>
     void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (loaded && IsLoaded) { page = 1; _ = Load(); } }
+    /// <summary>Navigates to the previous page of results.</summary>
     void Prev_Click(object sender, RoutedEventArgs e) { if (page > 1) { page--; _ = Load(); } }
+    /// <summary>Navigates to the next page of results.</summary>
     void Next_Click(object sender, RoutedEventArgs e) { page++; _ = Load(); }
 
+    /// <summary>Shows the detail card for the selected creation: loads preview image, name, summary, description, tags, and installation status.</summary>
     void List_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (List.SelectedItem is not Row r) { DetailCard.Visibility = Visibility.Collapsed; return; }
@@ -108,6 +119,7 @@ public partial class BrowsePage : UserControl, IRefresh
         ShowInstalled(c);
     }
 
+    /// <summary>Displays the installation status of a creation and updates the download button accordingly.</summary>
     void ShowInstalled(RemoteCreation c)
     {
         string? stem = null;
@@ -135,6 +147,7 @@ public partial class BrowsePage : UserControl, IRefresh
         catch (Exception ex) { DetailStatus.Text = "Download failed: " + ex.Message; DownloadButton.IsEnabled = true; }
     }
 
+    /// <summary>Removes the selected creation from the game's local installations.</summary>
     void Remove_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Row r) return;

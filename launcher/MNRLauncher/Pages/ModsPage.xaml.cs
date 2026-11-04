@@ -21,13 +21,14 @@ public partial class ModsPage : UserControl, IRefresh
         Empty.Visibility = mods.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>The enabled list in settings follows the order shown.</summary>
+    /// <summary>Saves the enabled mods list to settings, preserving the order shown in the UI.</summary>
     void SaveOrder()
     {
         MainWindow.Settings.EnabledMods = mods.Where(m => m.Enabled).Select(m => m.Id).ToList();
         MainWindow.Settings.Save();
     }
 
+    /// <summary>Toggles a mod's enabled state and reorders it to the end of the enabled group.</summary>
     void Toggle(object sender, RoutedEventArgs e)
     {
         if ((sender as CheckBox)?.DataContext is not Mod m) return;
@@ -39,6 +40,7 @@ public partial class ModsPage : UserControl, IRefresh
         SaveOrder(); Refresh();
     }
 
+    /// <summary>Moves a mod up or down in the enabled group (d = -1 for up, d = 1 for down).</summary>
     void Move(int d)
     {
         if (List.SelectedItem is not Mod m) return;
@@ -50,6 +52,7 @@ public partial class ModsPage : UserControl, IRefresh
     void Up_Click(object sender, RoutedEventArgs e) => Move(-1);
     void Down_Click(object sender, RoutedEventArgs e) => Move(1);
 
+    /// <summary>Imports mod files from .mnrmod, .zip, or .pkg files. For .pkg files, extracts the USRDIR as the mod's files.</summary>
     void Import_Click(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog { Filter = "ModNation mods (*.mnrmod;*.zip;*.pkg)|*.mnrmod;*.zip;*.pkg", Multiselect = true };
@@ -70,6 +73,7 @@ public partial class ModsPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Exports the selected mod as an .mnrmod file to a user-selected location.</summary>
     void Export_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Mod m) return;
@@ -79,6 +83,7 @@ public partial class ModsPage : UserControl, IRefresh
         catch (Exception ex) { MessageBox.Show(ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
+    /// <summary>Creates a new empty mod with the given name and opens its folder in Explorer.</summary>
     void New_Click(object sender, RoutedEventArgs e)
     {
         var name = Prompt.Ask("New mod", "Name of the mod:", "My mod");
@@ -88,9 +93,12 @@ public partial class ModsPage : UserControl, IRefresh
         Process.Start("explorer.exe", dir);
     }
 
+    /// <summary>Opens the selected mod's folder in Windows Explorer.</summary>
     void Show_Click(object sender, RoutedEventArgs e) { if (List.SelectedItem is Mod m) Process.Start("explorer.exe", m.Folder); }
+    /// <summary>Opens the global mods directory in Windows Explorer.</summary>
     void OpenFolder_Click(object sender, RoutedEventArgs e) { Directory.CreateDirectory(Paths.ModsDir); Process.Start("explorer.exe", Paths.ModsDir); }
 
+    /// <summary>Deletes the selected mod and its folder from disk.</summary>
     void Delete_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Mod m) return;

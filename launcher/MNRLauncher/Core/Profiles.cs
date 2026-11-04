@@ -13,6 +13,10 @@ public class Profile
     public bool IsDefault { get; init; }
     public bool Active { get; set; }
     public string DisplayName => IsDefault ? "Default (the game's normal saves)" : Name;
+    /// <summary>
+    /// Describes this profile's save data: file count, total size in KB, and last modified timestamp.
+    /// Returns "empty: the game starts from the beginning" if the folder doesn't exist or has no files.
+    /// </summary>
     public string Summary
     {
         get
@@ -36,6 +40,10 @@ public static class Profiles
     public static string Dir => Path.Combine(Paths.LauncherData, "profiles");
     public static string DefaultFolder => Path.Combine(Paths.Hdd0, "home", "00000001", "savedata");
 
+    /// <summary>
+    /// Lists all save profiles: the Default profile (the game's normal save location) plus any custom profiles
+    /// found in the profiles directory. Marks the active profile based on <paramref name="s"/>.
+    /// </summary>
     public static List<Profile> List(Settings s)
     {
         Directory.CreateDirectory(Dir);
@@ -46,8 +54,13 @@ public static class Profiles
         return list;
     }
 
+    /// <summary>Returns the currently active profile from the settings.</summary>
     public static Profile Active(Settings s) => List(s).First(p => p.Active);
 
+    /// <summary>
+    /// Creates a new save profile with the given name. Optionally copies save data from an existing profile.
+    /// Returns the path to the created profile folder.
+    /// </summary>
     public static string Create(string name, Profile? copyFrom)
     {
         var dest = Path.Combine(Dir, ModManager.SafeName(name));
@@ -57,6 +70,9 @@ public static class Profiles
         return dest;
     }
 
+    /// <summary>
+    /// Renames a profile folder. Updates the active profile reference in <paramref name="s"/> if the renamed profile was active.
+    /// </summary>
     public static void Rename(Profile p, string name, Settings s)
     {
         if (p.IsDefault) throw new InvalidOperationException("The default profile can't be renamed.");
@@ -66,6 +82,9 @@ public static class Profiles
         if (s.ActiveProfile == p.Name) s.ActiveProfile = Path.GetFileName(dest);
     }
 
+    /// <summary>
+    /// Deletes a profile folder. Resets the active profile to Default if the deleted profile was active.
+    /// </summary>
     public static void Delete(Profile p, Settings s)
     {
         if (p.IsDefault) throw new InvalidOperationException("The default profile can't be deleted.");
@@ -73,6 +92,7 @@ public static class Profiles
         if (s.ActiveProfile == p.Name) s.ActiveProfile = "";
     }
 
+    /// <summary>Recursively copies all files and subdirectories from <paramref name="from"/> to <paramref name="to"/>.</summary>
     static void CopyTree(string from, string to)
     {
         foreach (var d in Directory.GetDirectories(from, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, d)));

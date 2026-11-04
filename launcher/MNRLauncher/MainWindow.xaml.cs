@@ -20,6 +20,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         foreach (var p in current.made.Values) if (p is PlayPage pp) pp.Refresh();
     }
 
+    /// <summary>Initializes the main window: loads settings, migrates accounts, resets old caches, configures navigation pages, and checks for updates.</summary>
     public MainWindow()
     {
         InitializeComponent();
@@ -105,6 +106,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         catch (Exception) { /* offline or GitHub unreachable: the Install & updates page can still check by hand */ }
     }
 
+    /// <summary>Handles update notice clicks: navigates to the updates page and triggers an immediate check.</summary>
     void UpdateNotice_Click(object sender, RoutedEventArgs e)
     {
         NavUpdate.IsChecked = true;
@@ -149,6 +151,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
+    /// <summary>Handles navigation radio button clicks: lazily creates page instances, refreshes them, and displays the selected page.</summary>
     void Nav_Checked(object sender, RoutedEventArgs e)
     {
         var rb = (RadioButton)sender;

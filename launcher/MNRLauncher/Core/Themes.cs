@@ -11,9 +11,11 @@ namespace MNRLauncher.Core;
 /// Application.Resources, and the pages refer to them as DynamicResource, so a new theme shows at once.</summary>
 public static class Themes
 {
+    /// <summary>A colour theme: name, game aesthetic reference, light/dark mode, and all brush colours.</summary>
     public record Theme(string Name, string From, bool Light, string Bg, string Panel, string PanelHi, string Line,
                         string Text, string SubText, string Accent, string OnAccent, string Accent2);
 
+    /// <summary>All available colour themes, each inspired by a different MNR screen or aesthetic.</summary>
     public static readonly Theme[] All =
     {
         new("Pit lane", "the game's orange dialog boxes over charcoal", false,
@@ -27,14 +29,22 @@ public static class Themes
         new("Studio light", "the Creation Station's warm paper and orange", true,
             "#FFF5F0E7", "#FFECE5D8", "#FFFFFFFF", "#FFDDD3C2", "#FF2B2118", "#FF7A6C5C", "#FFE87500", "#FFFFFFFF", "#FF2B2118"),
     };
+    /// <summary>The default theme name applied when no theme is configured.</summary>
     public const string Default = "Pit lane";
 
+    /// <summary>Returns the theme with the given name, or the default theme if not found.</summary>
     public static Theme Get(string? name) => All.FirstOrDefault(t => t.Name == name) ?? All[0];
 
+    /// <summary>Parses a hex colour string into a WPF Color.</summary>
     static Color C(string hex) => (Color)ColorConverter.ConvertFromString(hex);
+    /// <summary>Linearly interpolates between two colours by the given factor t (0-1).</summary>
     static Color Mix(Color a, Color b, double t) =>
         Color.FromArgb(255, (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
 
+    /// <summary>
+    /// Applies the theme with the given name (or the default). Sets WPF UI appearance mode, accent colour,
+    /// and all custom brushes (background, panel, text, accent, etc.) in Application.Resources.
+    /// </summary>
     public static void Apply(string? name)
     {
         var t = Get(name);

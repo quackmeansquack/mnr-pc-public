@@ -27,6 +27,7 @@ public static class Joystick
     [DllImport("winmm.dll", CharSet = CharSet.Unicode)] static extern uint joyGetDevCapsW(UIntPtr id, out JOYCAPSW caps, uint size);
     const uint JOY_RETURNALL = 0xFF;
 
+    /// <summary>A connected game controller as reported by the Windows joystick API.</summary>
     public class Device
     {
         public uint Id { get; init; }
@@ -35,10 +36,16 @@ public static class Joystick
         public string Name { get; init; } = "";
         public int Axes { get; init; }
         public int Buttons { get; init; }
+        /// <summary>USB vendor:product identifier key used to match bindings.</summary>
         public string Key => $"{Vid:X4}:{Pid:X4}";
+        /// <summary>Human-readable label with device name and key.</summary>
         public string Label => $"{Name}  ({Key})";
     }
 
+    /// <summary>
+    /// Enumerates all connected game controllers (up to 16 devices) using the Windows joystick API.
+    /// Attempts to resolve the real device name from the registry OEM entries.
+    /// </summary>
     public static List<Device> List()
     {
         var list = new List<Device>();

@@ -18,9 +18,13 @@ public class Account
     public string? SaveProfile { get; set; }                  // save profile switched to with the account (null: leave as is, "": default saves)
 
     [JsonIgnore] public bool Active { get; set; }
+    /// <summary>The display name shown in the accounts ComboBox.</summary>
     [JsonIgnore] public string DisplayName => RpcnUser.Length > 0 ? RpcnUser : "(no user name)";
+    /// <summary>Badge text for the active account in the UI.</summary>
     [JsonIgnore] public string Badge => Active ? "IN USE" : "";
+    /// <summary>String representation for the ComboBox template.</summary>
     public override string ToString() => DisplayName;   // the dark ComboBox template shows the closed box's item as text
+    /// <summary>A summary line for the account details (password status, save profile, custom host).</summary>
     [JsonIgnore]
     public string Summary
     {
@@ -39,7 +43,10 @@ public class Account
 /// game runner reads (RpcnUser, password, token, host, player name), and its linked save profile becomes the active one.</summary>
 public static class Accounts
 {
-    /// <summary>Settings from before accounts existed: the one configured sign-in becomes the first account.</summary>
+    /// <summary>
+    /// Migrates legacy single-account settings (pre-multi-account) into the Accounts system.
+    /// Creates the first account from the old Settings fields if no accounts exist yet.
+    /// </summary>
     public static void Migrate(Settings s)
     {
         if (s.Accounts.Count > 0 || string.IsNullOrWhiteSpace(s.RpcnUser)) return;
@@ -47,6 +54,7 @@ public static class Accounts
         s.Accounts.Add(a); s.ActiveAccount = a.Id;
     }
 
+    /// <summary>Returns the full account list, marking the active account. Triggers migration if needed.</summary>
     public static List<Account> List(Settings s)
     {
         Migrate(s);
@@ -54,9 +62,14 @@ public static class Accounts
         return s.Accounts.OrderBy(a => a.RpcnUser, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>Returns the currently active account, or null if none is set.</summary>
     public static Account? Active(Settings s) => List(s).FirstOrDefault(a => a.Active);
 
-    /// <summary>Make <paramref name="a"/> the account the game signs in with (and switch to its saves, if it has some).</summary>
+    /// <summary>
+    /// Makes <paramref name="a"/> the account the game signs in with and switches to its linked save profile.
+    /// Copies account credentials into Settings fields that the game runner reads.
+    /// Creates a dedicated save profile for non-first accounts if one hasn't been assigned.
+    /// </summary>
     public static void Use(Account a, Settings s)
     {
         /* Saves per account: the game ties a save to the console identity it was made under, and each account signs in
@@ -81,7 +94,10 @@ public static class Accounts
             s.ActiveProfile = a.SaveProfile;
     }
 
-    /// <summary>After the Settings page changed the sign-in fields: keep the account in use up to date.</summary>
+    /// <summary>
+    /// Syncs the active account's fields after the user edits sign-in data on the Settings page.
+    /// Creates a new account entry if the active account doesn't exist yet.
+    /// </summary>
     public static void SyncActive(Settings s)
     {
         Migrate(s);
@@ -104,7 +120,10 @@ public static class Accounts
         return a;
     }
 
-    /// <summary>Adds an account (or updates the one with the same user name and server); returns it.</summary>
+    /// <summary>
+    /// Adds a new account or updates an existing one with the same RPCN username and server host.
+    /// Encrypts the password with DPAPI if provided. Automatically applies the account if it's the active one.
+    /// </summary>
     public static Account AddOrUpdate(Settings s, string user, string derivedPassword, string token, string host)
     {
         Migrate(s);
@@ -117,6 +136,7 @@ public static class Accounts
         return a;
     }
 
+    /// <summary>Removes the account. If it was active, activates the next available account or clears sign-in fields.</summary>
     public static void Remove(Account a, Settings s)
     {
         s.Accounts.RemoveAll(x => x.Id == a.Id);
@@ -127,10 +147,13 @@ public static class Accounts
         else { s.RpcnUser = ""; s.RpcnPasswordProtected = ""; s.RpcnToken = ""; }
     }
 
+    /// <summary>Decrypts and returns the account's DPAPI-protected password.</summary>
     public static string Password(Account a) => Settings.Unprotect(a.RpcnPasswordProtected);
 
-    /// <summary>The author written into exported creations and new mods: the account in use (a name chosen with an
-    /// earlier launcher, else its RPCN name), else the Windows user.</summary>
+    /// <summary>
+    /// Returns the display name used for exported creations and new mods.
+    /// Prefers the account's custom player name, then RPCN name, then the legacy PlayerName setting, then the Windows username.
+    /// </summary>
     public static string ExportName(Settings s)
     {
         var a = s.Accounts.FirstOrDefault(x => x.Id == s.ActiveAccount);
@@ -138,7 +161,10 @@ public static class Accounts
         return s.PlayerName.Trim().Length > 0 ? s.PlayerName.Trim() : Environment.UserName;
     }
 
-    /// <summary>RPCS3 keeps its account in config\rpcn.yml (NPID, derived password, token, host). Returns the file read, or null.</summary>
+    /// <summary>
+    /// Locates the RPCS3 RPCN configuration file (rpcn.yml) from either the launcher's tools directory or the user's AppData.
+    /// Returns the file path if found, or null if neither location contains the config.
+    /// </summary>
     public static string? FindRpcs3Config()
     {
         var candidates = new[]
@@ -149,6 +175,10 @@ public static class Accounts
         return candidates.FirstOrDefault(File.Exists);
     }
 
+    /// <summary>
+    /// Parses the RPCS3 rpcn.yml file to extract NPID, derived password, token, and server host.
+    /// Validates the host field and falls back to the default RPCN host if invalid.
+    /// </summary>
     public static (string npid, string password, string token, string host) ReadRpcs3Config(string file)
     {
         string Field(string name)

@@ -1,5 +1,6 @@
 using System.Windows;
 
+/// <summary>Assembly-level theme resource location directives for the WPF application.</summary>
 [assembly:ThemeInfo(
     ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
                                                 //(used if a resource is not found in the page,

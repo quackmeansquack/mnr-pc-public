@@ -15,6 +15,7 @@ public partial class AccountsPage : UserControl, IRefresh
 
     public AccountsPage() { InitializeComponent(); }
 
+    /// <summary>Refreshes the accounts page: lists accounts, populates save profiles, and shows the selected account's details.</summary>
     public void Refresh()
     {
         var keep = (List.SelectedItem as Account)?.Id;
@@ -26,6 +27,7 @@ public partial class AccountsPage : UserControl, IRefresh
         ShowSelected();
     }
 
+    /// <summary>Populates the save profile dropdown for the selected account and enables/disables the control.</summary>
     void ShowSelected()
     {
         loading = true;
@@ -39,6 +41,7 @@ public partial class AccountsPage : UserControl, IRefresh
 
     void List_SelectionChanged(object sender, SelectionChangedEventArgs e) { ShowSelected(); Status.Text = ""; }
 
+    /// <summary>Checks if the game is running with the current account and prompts the user to close it.</summary>
     bool GameRunningWarning()
     {
         if (!GameRunner.IsRunning) return false;
@@ -46,6 +49,7 @@ public partial class AccountsPage : UserControl, IRefresh
         return true;
     }
 
+    /// <summary>Sets the selected account as the active account and updates the status message.</summary>
     void Use_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Account a || GameRunningWarning()) return;
@@ -54,6 +58,7 @@ public partial class AccountsPage : UserControl, IRefresh
         Status.Text = $"Playing as {a.DisplayName}" + (a.SaveProfile == null ? "." : a.SaveProfile.Length == 0 ? ", with the default saves." : $", with the saves “{a.SaveProfile}”.");
     }
 
+    /// <summary>Adds a new RPCN account using the user-provided credentials, deriving and storing the password.</summary>
     async void Add_Click(object sender, RoutedEventArgs e)
     {
         string user = NewUser.Text.Trim(), typed = NewPassword.Password, token = NewToken.Text.Trim(), host = NewHost.Text.Trim();
@@ -138,6 +143,7 @@ public partial class AccountsPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Tests the selected account by logging into RPCN and requesting a game ticket.</summary>
     async void Test_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Account a) return;
@@ -157,6 +163,7 @@ public partial class AccountsPage : UserControl, IRefresh
         catch (Exception ex) { Status.Text = ex.Message; }
     }
 
+    /// <summary>Updates the save profile for the selected account based on the dropdown selection.</summary>
     void SaveFor_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (loading || List.SelectedItem is not Account a || SaveFor.SelectedItem is not string choice) return;
@@ -167,6 +174,7 @@ public partial class AccountsPage : UserControl, IRefresh
         var id = a.Id; Refresh(); List.SelectedItem = (List.ItemsSource as System.Collections.Generic.IEnumerable<Account>)?.FirstOrDefault(x => x.Id == id);
     }
 
+    /// <summary>Removes the selected account from the launcher after confirming with the user.</summary>
     void Remove_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Account a || GameRunningWarning()) return;

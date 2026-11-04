@@ -9,6 +9,7 @@ namespace MNRLauncher.Pages;
 
 public partial class ControlsPage : UserControl, IRefresh
 {
+    /// <summary>A UI row displaying a control definition and its current bindings.</summary>
     public class Row
     {
         public ControlDef Def { get; init; } = null!;
@@ -47,6 +48,7 @@ public partial class ControlsPage : UserControl, IRefresh
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape && listening != null) StopListening("Cancelled."); };
     }
 
+    /// <summary>Refreshes the controls page: lists available joysticks, loads control bindings, and displays wheel options.</summary>
     public void Refresh()
     {
         devices = Joystick.List();
@@ -59,6 +61,7 @@ public partial class ControlsPage : UserControl, IRefresh
         Ffb.IsChecked = o.ForceFeedback; Boost.Value = o.SteerBoost; Spring.Value = o.Spring; Damper.Value = o.Damper; WheelSaved.Text = "";
     }
 
+    /// <summary>Populates the UI rows with control definitions and their current bindings.</summary>
     void ShowRows()
     {
         Rows.ItemsSource = ControlMap.Controls.Select(d =>
@@ -68,6 +71,7 @@ public partial class ControlsPage : UserControl, IRefresh
         }).ToList();
     }
 
+    /// <summary>Rescans for available joysticks and reloads the controls page.</summary>
     void Rescan_Click(object sender, RoutedEventArgs e) => Refresh();
 
     void Ffb_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -76,6 +80,7 @@ public partial class ControlsPage : UserControl, IRefresh
         SpringText.Text = $"{Spring.Value:0}%"; DamperText.Text = $"{Damper.Value:0}%"; BoostText.Text = $"{Boost.Value:0}%";
     }
 
+    /// <summary>Applies wheel configuration settings (degrees, steer lock, force feedback, steering boost, spring/damper).</summary>
     void ApplyWheel_Click(object sender, RoutedEventArgs e)
     {
         if (!double.TryParse(WheelDeg.Text, out var deg) || deg < 0 || deg > 3600 || !double.TryParse(SteerLock.Text, out var lk) || lk < 0 || lk > 3600)
@@ -85,6 +90,7 @@ public partial class ControlsPage : UserControl, IRefresh
     }
     void Devices_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
+    /// <summary>Periodic tick handler: reads joystick state, updates axis bars and button display, and processes listening for bindings.</summary>
     void Tick(object? sender, EventArgs e)
     {
         if (Devices.SelectedItem is Joystick.Device d && Joystick.Read(d.Id, out var st))
@@ -96,6 +102,7 @@ public partial class ControlsPage : UserControl, IRefresh
         if (listening != null) Listen();
     }
 
+    /// <summary>Initiates binding capture for a control: prompts the user to press a button, move an axis, or press a pedal.</summary>
     void Bind_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not Row r) return;
@@ -111,6 +118,7 @@ public partial class ControlsPage : UserControl, IRefresh
         Focus();
     }
 
+    /// <summary>Continuously polls joystick devices to detect button presses, POV hat directions, and axis movements for binding capture.</summary>
     void Listen()
     {
         var r = listening!;
@@ -147,6 +155,7 @@ public partial class ControlsPage : UserControl, IRefresh
         }
     }
 
+    /// <summary>Finalizes an axis binding with appropriate low/high values, deadzone, and inversion based on the detected movement direction.</summary>
     void FinishAxis(Joystick.Device d, int axis, uint rest, uint extreme)
     {
         var r = listening!;
@@ -157,6 +166,7 @@ public partial class ControlsPage : UserControl, IRefresh
         Add(b);
     }
 
+    /// <summary>Adds a binding to the list, saves it, and refreshes the UI rows.</summary>
     void Add(Binding b)
     {
         binds.RemoveAll(x => x.Control == b.Control);
@@ -166,6 +176,7 @@ public partial class ControlsPage : UserControl, IRefresh
         ShowRows();
     }
 
+    /// <summary>Stops the current binding capture and optionally displays a status message.</summary>
     void StopListening(string? message)
     {
         listening = null; moving = null;
@@ -176,6 +187,7 @@ public partial class ControlsPage : UserControl, IRefresh
         t.Start();
     }
 
+    /// <summary>Clears all bindings for the selected control definition.</summary>
     void Clear_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not Row r) return;
@@ -183,6 +195,7 @@ public partial class ControlsPage : UserControl, IRefresh
         ControlMap.Save(binds); ShowRows();
     }
 
+    /// <summary>Clears all control bindings after user confirmation.</summary>
     void ClearAll_Click(object sender, RoutedEventArgs e)
     {
         if (binds.Count == 0 || MessageBox.Show("Remove all bindings?", "Controls", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;

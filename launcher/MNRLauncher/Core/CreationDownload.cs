@@ -35,6 +35,9 @@ public static class CreationDownload
     static string DataDir => Path.Combine(Paths.CreationsDir, "1", "DATA");
 
     // ---------------------------------------------------------------- the game's checks
+
+    /// <summary>The reflected Jones polynomial lookup table for CRC-64 computation. t[1] = 0x7AD870C830358979,
+    /// as in the game's table. Generated once at startup.</summary>
     static readonly ulong[] Table = MakeTable();
     static ulong[] MakeTable()
     {
@@ -55,7 +58,7 @@ public static class CreationDownload
     static byte[] CString(byte[] c, int? at) { if (at == null) return Array.Empty<byte>(); int e = Array.IndexOf(c, (byte)0, at.Value); return c.AsSpan(at.Value, e - at.Value).ToArray(); }
 
     /// <summary>The metadata check at 0x58 (the game's f_00651010): CRC-64 chained over bytes 0x50..0x8F with 0x58..0x5F
-    /// zeroed, the two hash lists, then the seven strings (without their zeros).</summary>
+    /// zeroed, the two hash lists, then the seven strings (without their zeros). Used to verify the .CMD's integrity.</summary>
     public static ulong CmdCheck(byte[] c)
     {
         var blk = c.AsSpan(0x50, 0x40).ToArray(); Array.Clear(blk, 8, 8);
@@ -68,13 +71,15 @@ public static class CreationDownload
         for (int ptr = 0x98; ptr < 0xB4; ptr += 4) crc = Crc64(CString(c, Rel(c, ptr)), crc);
         return crc;
     }
-    /// <summary>Both of the game's checks hold: the data CRC (0x50) and the metadata CRC (0x58).</summary>
+    /// <summary>Both of the game's checks hold: the data CRC (0x50) and the metadata CRC (0x58). Verifies that
+    /// the .CMD matches the .SAV/.TRK data.</summary>
     public static bool Valid(byte[] cmd, byte[] data) =>
         cmd.Length >= 0xB8 && U32(cmd, 0) == 0xBFDB1ACDu && Crc64(data) == ((ulong)U32(cmd, 0x50) << 32 | U32(cmd, 0x54)) && CmdCheck(cmd) == ((ulong)U32(cmd, 0x58) << 32 | U32(cmd, 0x5C));
 
-    /// <summary>The .CMD as the game writes it for a download (state 3) or one's own restored creation (state 2): ids,
-    /// version and creator names from the server's record, the creation's name, description, region and hash lists kept,
-    /// lists then strings packed after the header (an empty list takes a zero byte), padded to 4, re-signed.</summary>
+    /// <summary>Rebuilds the .CMD as the game writes it for a download (state 3) or one's own restored creation (state 2):
+    /// ids, version and creator names from the server's record, the creation's name, description, region and hash lists kept,
+    /// lists then strings packed after the header (an empty list takes a zero byte), padded to 4, re-signed.
+    /// Reproduces the game's file byte for byte.</summary>
     public static byte[] Rebuild(byte[] cmd, IReadOnlyDictionary<string, string> rec, uint state)
     {
         uint Num(string k) => rec.TryGetValue(k, out var v) && long.TryParse(v, out var n) ? (uint)n : 0;
@@ -99,15 +104,20 @@ public static class CreationDownload
     }
 
     // ---------------------------------------------------------------- the server
+
+    /// <summary>Constructs the server base URL from settings, using RevivalAddress as default if no address is set.</summary>
     public static string ServerBase(Settings s) =>
         $"http://{(s.ServerAddress.Trim().Length > 0 ? s.ServerAddress.Trim() : RevivalAddress)}:{(s.ServerPort > 0 ? s.ServerPort : 10050)}";
     public static bool OnRevival(Settings s) => s.ServerAddress.Trim() == RevivalAddress;
 
+    /// <summary>Checks if the server supports the mnrpc import feature by querying /mnrpc/caps.
+    /// Returns true if the response starts with "mnrpc import".</summary>
     public static async Task<bool> CanImport(string server)
     {
         try { return (await Http.GetStringAsync($"{server}/mnrpc/caps")).StartsWith("mnrpc import"); } catch (Exception) { return false; }
     }
-    /// <summary>The server's record of a creation (the attributes of its player_creations/&lt;id&gt;.xml), or null.</summary>
+    /// <summary>The server's record of a creation (the attributes of its player_creations/&lt;id&gt;.xml), or null
+    /// if the server doesn't have it or the status isn't "0" (success).</summary>
     public static async Task<Dictionary<string, string>?> Record(string server, int id)
     {
         var x = XDocument.Parse(await Http.GetStringAsync($"{server}/player_creations/{id}.xml"));
@@ -115,7 +125,7 @@ public static class CreationDownload
         var pc = x.Root!.Element("response")?.Element("player_creation");
         return pc?.Attributes().ToDictionary(a => a.Name.LocalName, a => a.Value);
     }
-    /// <summary>Asks a server with the import to copy a Revival creation. True when it has it afterwards.</summary>
+    /// <summary>Asks a server with the import to copy a Revival creation. Returns true when the import succeeds.</summary>
     public static async Task<bool> Import(string server, int id)
     {
         using var r = await Http.PostAsync($"{server}/mnrpc/import?id={id}", null);
@@ -130,7 +140,8 @@ public static class CreationDownload
     /// (its "Zurg" is 00007b5b_Zurg.sav, whatever the server lists it as).</summary>
     public static string NameInCmd(byte[] cmd) => cmd.Length >= 0xB8 ? Encoding.Latin1.GetString(CString(cmd, Rel(cmd, 0x98))) : "";
 
-    /// <summary>A downloaded creation's files (any name) by id, in Data\Download.</summary>
+    /// <summary>Finds a downloaded creation's files (any name) by id in Data\Download. Returns the stem (path without extension)
+    /// or null if not found.</summary>
     public static string? Installed(int id)
     {
         foreach (var k in Kinds)
@@ -147,7 +158,8 @@ public static class CreationDownload
     }
 
     /// <summary>Downloads creation id as the game would from the server the game plays on (asking it to import from
-    /// Revival first when it can). Returns the installed files' stem.</summary>
+    /// Revival first when it can). Downloads data.bin, rewrites the .CMD with server record data, validates checksums,
+    /// and writes the creation files to Data\Download\. Returns the installed files' stem.</summary>
     public static async Task<string> Install(Settings s, int id, Action<string>? status = null)
     {
         var server = ServerBase(s);

@@ -28,15 +28,19 @@ public sealed class RpcnClient : IDisposable
     public const int ProtocolVersion = 34;   // RPCN 34 (Oct 2026: trophy sync, TSS) only added commands; login, tickets and signaling are unchanged
     public const string DefaultHost = "np.rpcs3.net:31313";
 
+    /// <summary>RPCN packet types: request, reply, notification, or server info.</summary>
     enum PacketType : byte { Request, Reply, Notification, ServerInfo }
+    /// <summary>RPCN protocol commands: login, terminate, create account, send token, friend operations, signaling, ticket, messaging, presence.</summary>
     enum Command : ushort { Login = 0, Terminate = 1, Create = 2, SendToken = 4, AddFriend = 8, RemoveFriend = 9, RequestSignalingInfos = 27, RequestTicket = 28, SendMessage = 29, SetPresence = 51 }
+    /// <summary>Notification command ID for signaling helper (another player requesting our network address for P2P connection).</summary>
     public const ushort NotificationSignalingHelper = 12;   // another player asked RPCN for our address: punch through to it
-    // friends (as RPCS3's rpcn_client): a request came in, a friend was added or removed, went on- or offline, changed presence; a message
+    /// <summary>Friend notification command IDs: query, new, lost, status change, message received, presence change.</summary>
     public const ushort NotificationFriendQuery = 5, NotificationFriendNew = 6, NotificationFriendLost = 7, NotificationFriendStatus = 8,
                         NotificationMessageReceived = 10, NotificationFriendPresenceChanged = 11;
 
-    /// <summary>A friend as RPCN reports them: online, and their presence (the game's communication id "NPWR01234_00",
-    /// title, status, comment and the game's own presence data).</summary>
+    /// <summary>
+    /// A friend as RPCN reports them: online status, presence data (communication ID, title, status, comment), and custom data.
+    /// </summary>
     public sealed class Friend
     {
         public bool Online;
@@ -49,6 +53,9 @@ public sealed class RpcnClient : IDisposable
     public HashSet<string> RequestsReceived { get; } = new();
     public HashSet<string> Blocked { get; } = new();
 
+    /// <summary>
+    /// RPCN error codes mapped to human-readable names, matching RPCS3's error table.
+    /// </summary>
     static readonly string[] Errors =
     {
         "NoError", "Malformed", "Invalid", "InvalidInput", "TooSoon", "LoginError", "LoginAlreadyLoggedIn", "LoginInvalidUsername",
@@ -57,22 +64,38 @@ public sealed class RpcnClient : IDisposable
         "RoomGroupNoJoinLabel", "RoomGroupFull", "RoomGroupJoinLabelNotFound", "RoomGroupMaxSlotMismatch", "Unauthorized", "DbFail",
         "EmailFail", "NotFound", "Blocked", "AlreadyFriend", "ScoreNotBest", "ScoreInvalid", "ScoreHasData", "CondFail", "Unsupported",
     };
+    /// <summary>Returns the human-readable name for an RPCN error code, or a generic "error N" string.</summary>
     public static string ErrorName(byte e) => e < Errors.Length ? Errors[e] : $"error {e}";
 
+    /// <summary>TCP client connection to the RPCN server.</summary>
     TcpClient? tcp;
+    /// <summary>SSL stream wrapping the TCP connection for encrypted communication.</summary>
     SslStream? ssl;
+    /// <summary>Monotonically increasing packet ID for matching requests to replies.</summary>
     ulong nextId = 1;
+    /// <summary>The RPCN server's negotiated protocol version.</summary>
     public int ServerVersion { get; private set; }
+    /// <summary>The online name (NPID) of the signed-in user.</summary>
     public string OnlineName { get; private set; } = "";
+    /// <summary>RPCN's numeric user ID, used in the game's UDP pings.</summary>
     public long UserId { get; private set; }               // RPCN's id for the account (the game's UDP pings carry it)
+    /// <summary>The server's IP address as seen by this client.</summary>
     public IPAddress? ServerAddress => (tcp?.Client.RemoteEndPoint as IPEndPoint)?.Address;
+    /// <summary>True while the connection is alive and the reader thread is running.</summary>
     public bool Alive { get; private set; } = true;
     /// <summary>Server notifications (command, payload) once <see cref="StartReader"/> runs.</summary>
     public event Action<ushort, byte[]>? Notification;
+    /// <summary>Lock object for thread-safe packet writing.</summary>
     readonly object writeLock = new();
+    /// <summary>Pending request ID -> TaskCompletionSource mapping for async request/reply matching.</summary>
     readonly Dictionary<ulong, TaskCompletionSource<byte[]>> pending = new();
+    /// <summary>The background thread reading packets from the RPCN server.</summary>
     Thread? reader;
 
+    /// <summary>
+    /// Connects to the RPCN server at the given host, negotiates protocol version, and returns the client.
+    /// Uses IPv4 only to avoid IPv6 hang on networks without IPv6 routing. Disables certificate validation (matching RPCS3).
+    /// </summary>
     public static RpcnClient Connect(string host, int timeoutMs = 15000)
     {
         string h = host.Trim(); int port = 31313;
@@ -96,7 +119,10 @@ public sealed class RpcnClient : IDisposable
         return c;
     }
 
-    /// <summary>Signs in. <paramref name="derivedPassword"/> is <see cref="DerivePassword"/>'s result.</summary>
+    /// <summary>
+    /// Signs in to RPCN with the given NPID, derived password (PBKDF2-HMAC-SHA3-256 output), and session token.
+    /// Parses the reply to extract online name, user ID, friends list, and friend request states.
+    /// </summary>
     public void Login(string npid, string derivedPassword, string token)
     {
         var body = new List<byte>();
@@ -131,7 +157,9 @@ public sealed class RpcnClient : IDisposable
         catch (Exception) { }   // (an older server without the lists: no friends)
     }
 
-    /// <summary>Presence as RPCN sends it: communication id (12 bytes), title, status, comment, u32 size + data.</summary>
+    /// <summary>
+    /// Parses a friend's presence data from an RPCN packet: communication ID, title, status, comment, and custom data.
+    /// </summary>
     static void ReadPresence(byte[] b, ref int pos, Friend f)
     {
         f.ComId = b[pos] == 0 ? "" : Encoding.ASCII.GetString(b, pos, 12).TrimEnd('\0'); pos += 12;   // (no game: zeros + "_00")
@@ -140,8 +168,10 @@ public sealed class RpcnClient : IDisposable
         f.Data = b[pos..(pos + (int)Math.Min(size, 128))]; pos += (int)size;
     }
 
-    /// <summary>A friend notification (see the Notification* constants) applied to <see cref="Friends"/>; returns the event
-    /// line for the game ("query|new|lost|status|presence ..."), or null.</summary>
+    /// <summary>
+    /// Processes a friend notification from RPCN, updating the Friends dictionary and returning an event line for the game.
+    /// Handles query, new, lost, status change, and presence change notifications.
+    /// </summary>
     public string? ApplyFriendNotification(ushort cmd, byte[] d)
     {
         int pos = 0;
@@ -176,13 +206,20 @@ public sealed class RpcnClient : IDisposable
         return null;
     }
 
+    /// <summary>Converts a byte array to a hex string, or "-" if empty.</summary>
     static string Hex(byte[] b) => b.Length == 0 ? "-" : Convert.ToHexString(b);
+    /// <summary>Converts a string to a hex string (UTF-8 encoded).</summary>
     static string Hex(string s) => Hex(Encoding.UTF8.GetBytes(s));
-    /// <summary>"online comid title status comment data" (strings and data as hex, "-" when empty).</summary>
+    /// <summary>
+    /// Formats a friend's presence as a single string for the game: "online comid title status comment data".
+    /// Strings and data are hex-encoded; empty values are represented as "-".
+    /// </summary>
     public static string PresenceLine(Friend f) => $"{(f.Online ? 1 : 0)} {(f.ComId.Length > 0 ? f.ComId : "-")} {Hex(f.Title)} {Hex(f.Status)} {Hex(f.Comment)} {Hex(f.Data)}";
 
-    /// <summary>A received message (MessageReceived: sender, u32 size + MessageDetails) as the game's event line
-    /// "msg sender comid mainType subType features data", or null.</summary>
+    /// <summary>
+    /// Parses a received message from RPCN and formats it as the game's event line: "msg sender comid mainType subType features data".
+    /// Uses protobuf parsing to extract message details from the payload.
+    /// </summary>
     public static string? MessageLine(byte[] d)
     {
         int pos = 0;
@@ -197,11 +234,15 @@ public sealed class RpcnClient : IDisposable
         return com.Length == 0 ? null : $"msg {from} {com} {Sub(3)} {Sub(4)} {feat} {Hex(data)}";
     }
 
-    /// <summary>Sends (or accepts) a friend request. Returns RPCN's error code (0: done).</summary>
+    /// <summary>Sends or accepts a friend request to the given NPID. Returns RPCN's error code (0: success).</summary>
     public byte AddFriend(string npid) { var r = Request(Command.AddFriend, Encoding.UTF8.GetBytes(npid).Append((byte)0).ToArray()); return r.Length > 0 ? r[0] : (byte)1; }
+    /// <summary>Removes a friend request from the given NPID. Returns RPCN's error code (0: success).</summary>
     public byte RemoveFriend(string npid) { var r = Request(Command.RemoveFriend, Encoding.UTF8.GetBytes(npid).Append((byte)0).ToArray()); return r.Length > 0 ? r[0] : (byte)1; }
 
-    /// <summary>Our presence for friends (SetPresence: communication id + u32 size + SetPresenceRequest {title, status, comment, data}).</summary>
+    /// <summary>
+    /// Sets our presence for friends: communication ID, title, status, comment, and custom data.
+    /// The presence is serialized as protobuf and sent to the RPCN server.
+    /// </summary>
     public void SetPresence(string comId, string title, string status, string comment, byte[] data)
     {
         var pb = new List<byte>();
@@ -212,7 +253,11 @@ public sealed class RpcnClient : IDisposable
         Send(Command.SetPresence, body.ToArray());
     }
 
-    /// <summary>A message to players (SendMessage: u32 size + SendMessageRequest {MessageDetails message, repeated npids}).</summary>
+    /// <summary>
+    /// Sends a message to one or more players via RPCN.
+    /// The message includes communication ID, main/sub type, features, subject, body, and custom data.
+    /// Recipients are specified as a list of NPID strings.
+    /// </summary>
     public void SendMessage(string comId, uint mainType, uint subType, uint features, string subject, string bodyText, byte[] data, IEnumerable<string> npids)
     {
         var m = new List<byte>();
@@ -227,8 +272,11 @@ public sealed class RpcnClient : IDisposable
         Send(Command.SendMessage, body.ToArray());
     }
 
-    /// <summary>A new account (as RPCS3's account creation: Create = npid\0 password\0 online name\0 avatar url\0 e-mail\0,
-    /// the online name being the user name). RPCN then e-mails a token, needed with the first sign-in.</summary>
+    /// <summary>
+    /// Creates a new RPCN account with the given NPID, derived password, and email.
+    /// The online name is set to the NPID, and a default avatar URL is used.
+    /// RPCN emails a verification token to the address, required for the first sign-in.
+    /// </summary>
     public void CreateAccount(string npid, string derivedPassword, string email)
     {
         var body = new List<byte>();
@@ -244,7 +292,10 @@ public sealed class RpcnClient : IDisposable
         });
     }
 
-    /// <summary>E-mails the account's token again (SendToken = npid\0 password\0).</summary>
+    /// <summary>
+    /// Requests RPCN to resend the account verification token via email.
+    /// Uses the NPID and derived password for authentication.
+    /// </summary>
     public void ResendToken(string npid, string derivedPassword)
     {
         var body = new List<byte>();
@@ -254,12 +305,18 @@ public sealed class RpcnClient : IDisposable
         if (reply[0] != 0) throw new RpcnException(reply[0], $"RPCN didn't resend the token: {ErrorName(reply[0])}.");
     }
 
-    /// <summary>RPCS3's rules: user names 3 to 16 letters, digits, '-' or '_'; e-mail a plain address.</summary>
+    /// <summary>
+    /// Validates an RPCN username per RPCS3 rules: 3-16 characters, ASCII letters/digits/hyphen/underscore.
+    /// </summary>
     public static bool ValidUserName(string n) => n.Length is >= 3 and <= 16 && n.All(ch => ch < 128 && (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_'));
+    /// <summary>Validates an email address using a standard regex pattern.</summary>
     public static bool ValidEmail(string e) => System.Text.RegularExpressions.Regex.IsMatch(e, @"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$");
 
-    /// <summary>From now on a thread reads the connection: replies go to their requests, notifications to
-    /// <see cref="Notification"/>. Used by the session kept open while the game runs.</summary>
+    /// <summary>
+    /// Starts the background reader thread that processes incoming RPCN packets.
+    /// Replies are routed to their pending requests; notifications are dispatched to the Notification event.
+    /// Used by the session kept open while the game runs.
+    /// </summary>
     public void StartReader()
     {
         tcp!.ReceiveTimeout = 0;
@@ -288,7 +345,10 @@ public sealed class RpcnClient : IDisposable
         reader.Start();
     }
 
-    /// <summary>A player's address as RPCN sees it (for connecting to them), or null if they aren't online.</summary>
+    /// <summary>
+    /// Requests the RPCN server for another player's network address (IP and port) for P2P connection.
+    /// Returns null if the player is offline or the request fails.
+    /// </summary>
     public (IPAddress addr, int port)? RequestSignalingInfos(string npid)
     {
         var body = new List<byte>(Encoding.UTF8.GetBytes(npid)) { 0 };
@@ -297,7 +357,10 @@ public sealed class RpcnClient : IDisposable
         return ParseSignalingAddr(Protobuf.Fields(reply, 5, (int)BitConverter.ToUInt32(reply, 1)));
     }
 
-    /// <summary>SignalingHelper payload: u32 size + MatchingSignalingInfo {string npid = 1; SignalingAddr addr = 2}.</summary>
+    /// <summary>
+    /// Parses a SignalingHelper notification payload from RPCN to extract the requesting player's NPID and network address.
+    /// The payload contains a protobuf-encoded MatchingSignalingInfo structure.
+    /// </summary>
     public static (string npid, IPAddress addr, int port)? ParseSignalingHelper(byte[] data)
     {
         if (data.Length < 4) return null;
@@ -307,7 +370,10 @@ public sealed class RpcnClient : IDisposable
         return a == null ? null : (Encoding.UTF8.GetString(npid), a.Value.addr, a.Value.port);
     }
 
-    /// <summary>SignalingAddr {bytes ip = 1; uint16 port = 2} with uint16 = {uint32 value = 1}.</summary>
+    /// <summary>
+    /// Parses a SignalingAddr protobuf structure to extract an IP address and port number.
+    /// The IP can be IPv4 (4 bytes) or IPv6 (16 bytes).
+    /// </summary>
     static (IPAddress addr, int port)? ParseSignalingAddr(Dictionary<int, byte[]> f)
     {
         if (!f.TryGetValue(1, out var ip) || (ip.Length != 4 && ip.Length != 16)) return null;
@@ -316,7 +382,10 @@ public sealed class RpcnClient : IDisposable
         return (new IPAddress(ip), port);
     }
 
-    /// <summary>An NP ticket for the game's service (MNR: UP9000-BCUS98167_00).</summary>
+    /// <summary>
+    /// Requests an NP ticket from RPCN for the given service ID and authentication cookie.
+    /// The ticket is a signed proof of identity that the game uses for server authentication.
+    /// </summary>
     public byte[] RequestTicket(string serviceId, byte[] cookie)
     {
         var body = new List<byte>();
@@ -333,7 +402,10 @@ public sealed class RpcnClient : IDisposable
         return reply[1..];
     }
 
-    /// <summary>A request whose answer isn't waited for (presence, messages: RPCS3 doesn't wait either); the reader drops it.</summary>
+    /// <summary>
+    /// Sends a fire-and-forget request to RPCN (no reply waited for). Used for presence updates and messages.
+    /// The reader thread will drop the reply if one arrives.
+    /// </summary>
     void Send(Command cmd, byte[] payload)
     {
         ulong id;
@@ -347,6 +419,10 @@ public sealed class RpcnClient : IDisposable
         lock (writeLock) { ssl!.Write(pkt); ssl.Flush(); }
     }
 
+    /// <summary>
+    /// Sends a request to RPCN and waits for the reply (up to 20 seconds).
+    /// If the reader thread is running, the reply is matched via TaskCompletionSource; otherwise, packets are read synchronously.
+    /// </summary>
     byte[] Request(Command cmd, byte[] payload)
     {
         ulong id;
@@ -373,6 +449,7 @@ public sealed class RpcnClient : IDisposable
         }
     }
 
+    /// <summary>Reads a single RPCN packet from the SSL stream: 15-byte header + payload.</summary>
     (PacketType, ushort, ulong, byte[]) ReadPacket()
     {
         var hdr = ReadExact(15);
@@ -381,6 +458,7 @@ public sealed class RpcnClient : IDisposable
         return ((PacketType)hdr[0], BitConverter.ToUInt16(hdr, 1), BitConverter.ToUInt64(hdr, 7), ReadExact((int)size - 15));
     }
 
+    /// <summary>Reads exactly <paramref name="n"/> bytes from the SSL stream, blocking until all bytes are received.</summary>
     byte[] ReadExact(int n)
     {
         var b = new byte[n]; int got = 0;
@@ -393,6 +471,7 @@ public sealed class RpcnClient : IDisposable
         return b;
     }
 
+    /// <summary>Reads a null-terminated UTF-8 string from the buffer, advancing pos past the null terminator.</summary>
     static string ReadString(byte[] b, ref int pos)
     {
         int end = Array.IndexOf(b, (byte)0, pos);
@@ -408,14 +487,20 @@ public sealed class RpcnClient : IDisposable
         try { tcp?.Dispose(); } catch { }
     }
 
-    /// <summary>RPCS3's password derivation: PBKDF2-HMAC-SHA3-256, 200,000 rounds, salt
-    /// "No matter where you go, everybody's connected.", 32 bytes as upper-case hex.</summary>
+    /// <summary>
+    /// Derives the RPCN password per RPCS3's algorithm: PBKDF2-HMAC-SHA3-256 with 200,000 rounds.
+    /// Uses a fixed salt "No matter where you go, everybody's connected." and returns 32 bytes as upper-case hex.
+    /// </summary>
     public static string DerivePassword(string password)
     {
         var key = Pbkdf2Sha3(Encoding.UTF8.GetBytes(password), Encoding.UTF8.GetBytes("No matter where you go, everybody's connected."), 200_000);
         return Convert.ToHexString(key);
     }
 
+    /// <summary>
+    /// Computes PBKDF2-HMAC-SHA3-256: iterates HMAC(SHA3-256, password, salt) for the given number of rounds,
+    /// XORing each block together to produce a 32-byte derived key.
+    /// </summary>
     static byte[] Pbkdf2Sha3(byte[] password, byte[] salt, int rounds)
     {   // one 32-byte block: T = U1 ^ U2 ^ ... with U1 = HMAC(P, S || 00000001), Un = HMAC(P, Un-1)
         const int Rate = 136;
@@ -432,9 +517,13 @@ public sealed class RpcnClient : IDisposable
     }
 }
 
-/// <summary>Just enough protobuf to read RPCN's small messages: field number -> raw bytes (varints as their bytes).</summary>
+/// <summary>
+/// Minimal protobuf parser/writer for RPCN's small messages.
+/// Supports varint decoding, field parsing (length-delimited and fixed-size), and basic message construction.
+/// </summary>
 static class Protobuf
 {
+    /// <summary>Parses protobuf fields from a byte range, returning a dictionary of field number -> raw bytes.</summary>
     public static Dictionary<int, byte[]> Fields(byte[] b, int pos, int len)
     {
         var f = new Dictionary<int, byte[]>();
@@ -450,7 +539,9 @@ static class Protobuf
         }
         return f;
     }
+    /// <summary>Reads a protobuf varint from the beginning of the buffer.</summary>
     public static ulong Varint(byte[] b) { int p = 0; return Varint(b, ref p); }
+    /// <summary>Reads a protobuf varint from the buffer, advancing pos. Returns the decoded value.</summary>
     static ulong Varint(byte[] b, ref int pos)
     {
         ulong v = 0; int shift = 0;
@@ -458,27 +549,41 @@ static class Protobuf
         return v;
     }
     // writing (proto3: empty fields are left out)
+    /// <summary>Writes a raw protobuf varint to the output list.</summary>
     static void Raw(List<byte> o, ulong v) { while (v >= 0x80) { o.Add((byte)(v | 0x80)); v >>= 7; } o.Add((byte)v); }
+    /// <summary>Writes a protobuf varint field (field number + value) to the output list.</summary>
     public static void Varint(List<byte> o, int field, ulong v) { if (v == 0) return; Raw(o, (ulong)field << 3); Raw(o, v); }
+    /// <summary>Writes a protobuf bytes field (field number + length-delimited value) to the output list.</summary>
     public static void Bytes(List<byte> o, int field, byte[] v) { if (v.Length == 0) return; Message(o, field, v); }
+    /// <summary>Writes a protobuf length-delimited message field to the output list.</summary>
     public static void Message(List<byte> o, int field, byte[] v) { Raw(o, (ulong)field << 3 | 2); Raw(o, (ulong)v.Length); o.AddRange(v); }   // (written even when empty)
 }
 
+/// <summary>
+/// Exception thrown by RPCN operations containing the server's error code.
+/// </summary>
 public class RpcnException : IOException
 {
+    /// <summary>The RPCN error code returned by the server.</summary>
     public byte Code { get; }
+    /// <summary>Creates a new RpcnException with the given error code and message.</summary>
     public RpcnException(byte code, string message) : base(message) { Code = code; }
 }
 
-/// <summary>SHA3-256 (Keccak-f[1600], rate 136 bytes). Windows 10 has no SHA-3 of its own.</summary>
+/// <summary>
+/// SHA3-256 implementation using Keccak-f[1600] permutation with rate 136 bytes.
+/// Required because Windows 10 has no built-in SHA-3 support. Used for PBKDF2 password derivation.
+/// </summary>
 sealed class Sha3
 {
     readonly ulong[] st = new ulong[25];
     readonly byte[] buf = new byte[136];
     int fill;
 
+    /// <summary>Creates a deep copy of this SHA3 instance for parallel HMAC computation.</summary>
     public Sha3 Clone() { var c = new Sha3(); Array.Copy(st, c.st, 25); Array.Copy(buf, c.buf, fill); c.fill = fill; return c; }
 
+    /// <summary>Absorbs data into the SHA3 state, processing full blocks as they arrive.</summary>
     public void Absorb(byte[] data)
     {
         foreach (var x in data)

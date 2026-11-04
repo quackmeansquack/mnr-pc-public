@@ -7,16 +7,25 @@ using System.Threading.Tasks;
 
 namespace MNRLauncher.Core;
 
-/// <summary>Before the game goes online: makes the published creations on disk match the server it will play on, so
-/// its check of them (a stock server answers "ban" for ids it doesn't know, and the game then deletes the creation)
-/// loses nothing.
-///  - Each server has its own published creations (Data\Upload and Data\Download): switching servers sets the previous
-///    server's aside in launcher\data\server_creations\&lt;server&gt; and brings back the new one's.
-///  - Downloads the first launchers put in Data\Local are installed again as the game's own downloads.
-///  - A download the server doesn't have is imported (servers with the import, from MNR Revival); one it still can't
-///    have is set aside in launcher\data\server_creations\_unavailable.
-///  - One's own shared creation the server doesn't have (its database was reset, say) becomes a local creation again
-///    (a free id from 5000 to 9999, published state 0), so it can be shared again in the game.
+/// <summary>Synchronizes published creations (Local/Upload/Download folders) with the currently selected server.
+///
+/// Before the game goes online, this ensures the published creations on disk match the server it will play on,
+/// so the server's validation check doesn't delete anything. The game queries player_creations/&lt;id&gt;.xml
+/// for each published creation; a stock server returns "ban" for ids it doesn't know, which the game then deletes.
+///
+/// What it does:
+///  1. Switches servers: each server has its own published creations (Data\Upload and Data\Download). Switching
+///     servers sets the previous server's aside in launcher\data\server_creations\&lt;server&gt; and brings
+///     back the new one's.
+///  2. Reinstalls old downloads: downloads from the first launcher versions were placed in Data\Local as the
+///     game's own creations; these are reinstalled as proper downloads (Data\Download).
+///  3. Imports missing creations: a download the server doesn't have is imported via the mnrpc import endpoint
+///     (servers with this capability, like PLGarage/mnrpc/caps). One the server still can't have is set aside
+///     in launcher\data\server_creations\_unavailable.
+///  4. Restores local originals: one's own shared creation the server doesn't have (its database was reset, say)
+///     becomes a local creation again (a free id from 5000 to 9999, published state 0), so it can be shared
+///     again in the game.
+///
 /// Offline (or when the server can't be reached) nothing is changed: the game checks creations only online.</summary>
 public static class CreationSync
 {
@@ -26,11 +35,14 @@ public static class CreationSync
     static readonly string[] Published = { "UPLOAD", "DOWNLOAD" };
     static readonly string[] TypeFolders = { "Vehicle", "Track", "Character" };   // by the .CMD's type (0x84)
 
+    /// <summary>Creates a filesystem-safe key from a server address: lowercase, alphanumeric and dots preserved,
+    /// everything else replaced with underscores. Used as the folder name under server_creations/.</summary>
     static string Key(string address) => string.Concat(address.Trim().ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) || c == '.' ? c : '_'));
     static uint U32(byte[] c, int o) => (uint)(c[o] << 24 | c[o + 1] << 16 | c[o + 2] << 8 | c[o + 3]);
     static string Name(string stem) { var f = Path.GetFileName(stem); return f.Length > 9 && f[8] == '_' ? f[9..] : f; }   // (without the id)
 
-    /// <summary>Lines saying what changed (empty when nothing did).</summary>
+    /// <summary>Checks the server, switches published creations if needed, reinstalls old downloads, imports missing
+    /// creations, and restores local originals. Returns a list of lines describing what changed (empty when nothing did).</summary>
     public static async Task<List<string>> Prepare(Settings s, Action<string>? status = null)
     {
         var notes = new List<string>();
@@ -94,12 +106,15 @@ public static class CreationSync
         return notes;
     }
 
+    /// <summary>Checks if the server has a record of the given creation id. Returns true if the server knows about it
+    /// or if the server query fails (no answer: assume it exists, change nothing).</summary>
     static async Task<bool> Known(string server, int id)
     {
         try { return await CreationDownload.Record(server, id) != null; } catch (Exception) { return true; }   // (no answer: assume so, change nothing)
     }
 
-    /// <summary>One's own published creation made local again: a free local id, published state 0, re-signed.</summary>
+    /// <summary>Converts a published creation back to local: assigns a free local id (5000-9999), sets published state
+    /// to 0, re-signs the .CMD, and moves all files to the LOCAL folder. Throws if no free local id is available.</summary>
     static void ToLocal(string stem, byte[] cmd)
     {
         var used = new HashSet<uint>();
@@ -125,12 +140,14 @@ public static class CreationSync
         }
     }
 
+    /// <summary>Renames all files matching the stem's filename to use the new name, preserving extensions.</summary>
     static void RenameStem(string stem, string newName)
     {
         var dir = Path.GetDirectoryName(stem)!; var old = Path.GetFileName(stem);
         foreach (var f in Directory.GetFiles(dir, old + "*")) File.Move(f, Path.Combine(dir, newName + Path.GetFileName(f)[old.Length..]), true);
     }
 
+    /// <summary>Moves all files matching the stem's filename to the target directory.</summary>
     static void MoveStem(string stem, string toDir)
     {
         Directory.CreateDirectory(toDir);

@@ -7,7 +7,11 @@ using System.Text.Json;
 
 namespace MNRLauncher.Core;
 
-/// <summary>One creation on disk: its data file(s) and any thumbnails with the same name.</summary>
+/// <summary>Represents one creation on disk: its data file(s) and any thumbnails with the same name.
+///
+/// Used by the UI to display creation info. The ThumbnailImage property loads the thumbnail into memory
+/// with BitmapCacheOption.OnLoad so the file handle is closed immediately, allowing the game to rewrite
+/// the thumbnail (otherwise the game's avatar picture saves fail with "not enough space in the HDD").</summary>
 public class Creation
 {
     public string Name { get; init; } = "";
@@ -38,7 +42,7 @@ public class Creation
     public string Summary => $"{(Source.Length > 0 ? Source + " " : "")}{Kind}  ·  {Files.Count} file{(Files.Count == 1 ? "" : "s")}  ·  {Bytes / 1024.0:0.#} KB  ·  {Modified:yyyy-MM-dd HH:mm}";
 }
 
-/// <summary>manifest.json inside a .mnrcreation file.</summary>
+/// <summary>manifest.json inside a .mnrcreation file. Stores the creation's metadata and file list for export/import.</summary>
 public class CreationManifest
 {
     public string Format { get; set; } = "mnrcreation";
@@ -51,13 +55,21 @@ public class CreationManifest
     public List<string> Files { get; set; } = new();
 }
 
-/// <summary>Creations live in hdd0\game\BCUS98167_UCC\USRDIR (the game's user-created-content data). A .mnrcreation file
+/// <summary>Manages creation files on disk: scanning, exporting to .mnrcreation archives, and importing from them.
+///
+/// Creations live in hdd0\game\BCUS98167_UCC\USRDIR (the game's user-created-content data). A .mnrcreation file
 /// is a zip of manifest.json plus the creation's files under their paths in that folder, so importing puts them back
-/// where the game looks for them.</summary>
+/// where the game looks for them. The manifest stores the creation's metadata (name, kind, author, description)
+/// and the relative file paths.</summary>
 public static class CreationStore
 {
     static readonly string[] DataExt = { ".SAV", ".TRK", ".MOD", ".KRT", ".CHR", ".BIN" };
 
+    /// <summary>Scans the creations directory and returns a list of all creations found, sorted by last modified time.
+    ///
+    /// Groups files by folder + base name (e.g., PLAYER_0_PRIMARY.PNG and PLAYER_0_PRIMARY.SAV belong together).
+    /// Skips groups without data files unless they contain AVATARS. Determines source (Mine/Downloaded/Uploaded/DLC)
+    /// and kind (Character/Kart/Track/Other/Avatar) from the path and file extensions.</summary>
     public static List<Creation> Scan()
     {
         var root = Paths.CreationsDir;
@@ -86,7 +98,7 @@ public static class CreationStore
         return list.OrderByDescending(c => c.Modified).ToList();
     }
 
-    /// <summary>"PLAYER_0_SECONDARY_SMALL" -> "PLAYER_0_SECONDARY": thumbnails group with their creation.</summary>
+    /// <summary>Strips thumbnail suffixes (_SMALL, _LARGE, _THUMB, _THUMBNAIL) so thumbnails group with their creation.</summary>
     static string StemOf(string f)
     {
         var s = Path.GetFileNameWithoutExtension(f);
@@ -95,12 +107,15 @@ public static class CreationStore
         return s;
     }
 
+    /// <summary>Determines the creation's source from its path: DOWNLOAD -> Downloaded, LOCAL -> Mine, UPLOAD -> Uploaded, DLC -> DLC.</summary>
     static string SourceOf(string key)
     {
         var k = key.ToUpperInvariant().Replace('/', '\\');
         return k.Contains(@"\DOWNLOAD\") ? "Downloaded" : k.Contains(@"\LOCAL\") ? "Mine" : k.Contains(@"\UPLOAD\") ? "Uploaded" : k.Contains(@"\DLC\") ? "DLC" : "";
     }
 
+    /// <summary>Determines the creation's kind from its path and file extensions: .TRK -> Track, VEHICLE/KART -> Kart,
+    /// CHARACTER/CHAR -> Character, otherwise Other.</summary>
     static string KindOf(string key, List<string> files)
     {
         var k = key.ToUpperInvariant();
@@ -110,6 +125,8 @@ public static class CreationStore
         return "Other";
     }
 
+    /// <summary>Exports a creation to a .mnrcreation archive (zip of manifest.json + creation files).
+    /// The manifest stores the creation's metadata and file paths.</summary>
     public static void Export(Creation c, string archive, string author, string description)
     {
         if (File.Exists(archive)) File.Delete(archive);
@@ -120,6 +137,7 @@ public static class CreationStore
         foreach (var rel in c.Files) zip.CreateEntryFromFile(Path.Combine(Paths.CreationsDir, rel), "files/" + rel.Replace('\\', '/'), CompressionLevel.Optimal);
     }
 
+    /// <summary>Reads and validates the manifest from a .mnrcreation archive. Throws if the file is not a valid creation archive.</summary>
     public static CreationManifest ReadManifest(string archive)
     {
         using var zip = ZipFile.OpenRead(archive);
@@ -131,13 +149,15 @@ public static class CreationStore
         return m;
     }
 
-    /// <summary>Files the import would overwrite.</summary>
+    /// <summary>Files the import would overwrite (existing files with the same paths in the creations directory).</summary>
     public static List<string> Collisions(string archive)
     {
         var m = ReadManifest(archive);
         return m.Files.Where(f => File.Exists(Path.Combine(Paths.CreationsDir, f))).ToList();
     }
 
+    /// <summary>Imports a .mnrcreation archive: extracts manifest.json + creation files to the creations directory.
+    /// Validates that extracted files stay within the creations directory (no ../ escapes). Returns the manifest.</summary>
     public static CreationManifest Import(string archive)
     {
         var m = ReadManifest(archive);

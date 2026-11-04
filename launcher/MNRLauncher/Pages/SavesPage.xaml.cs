@@ -18,6 +18,7 @@ public partial class SavesPage : UserControl, IRefresh
         List.SelectedItem = list.FirstOrDefault(p => p.Folder == keep) ?? list.First(p => p.Active);
     }
 
+    /// <summary>Shows a warning dialog and returns true if the game is currently running.</summary>
     bool GameRunningWarning()
     {
         if (!GameRunner.IsRunning) return false;
@@ -35,8 +36,8 @@ public partial class SavesPage : UserControl, IRefresh
 
     void New_Click(object sender, RoutedEventArgs e) => Make(null);
 
-    /// <summary>A zip of the selected profile (or the one in use) in launcher\data\save_backups; also made automatically
-    /// before updates and profile switches.</summary>
+    /// <summary>Creates a manual backup zip of the selected profile (or the currently active one) in launcher\data\save_backups.
+    /// Backups are also made automatically before updates and profile switches.</summary>
     void Backup_Click(object sender, RoutedEventArgs e)
     {
         var p = List.SelectedItem as Profile ?? Profiles.Active(MainWindow.Settings);
@@ -50,6 +51,8 @@ public partial class SavesPage : UserControl, IRefresh
     void OpenBackups_Click(object sender, RoutedEventArgs e) { Directory.CreateDirectory(SaveBackup.Dir); System.Diagnostics.Process.Start("explorer.exe", SaveBackup.Dir); }
     void Duplicate_Click(object sender, RoutedEventArgs e) { if (List.SelectedItem is Profile p) Make(p); }
 
+    /// <summary>Creates a new save profile (from scratch or duplicating an existing one).
+    /// Prompts for a name, creates the profile, and optionally activates it.</summary>
     void Make(Profile? from)
     {
         var name = Prompt.Ask(from == null ? "New profile" : "Duplicate profile", "Name of the new profile:",
@@ -65,6 +68,7 @@ public partial class SavesPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Renames the selected profile, skipping the default profile.</summary>
     void Rename_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Profile p || p.IsDefault || GameRunningWarning()) return;
@@ -75,6 +79,7 @@ public partial class SavesPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Deletes the selected profile and its saves, skipping the default profile.</summary>
     void Delete_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Profile p || p.IsDefault || GameRunningWarning()) return;
@@ -85,6 +90,7 @@ public partial class SavesPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Opens the selected profile's folder in Windows Explorer.</summary>
     void Open_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Profile p) return;

@@ -11,6 +11,7 @@ public partial class CreationsPage : UserControl, IRefresh
 {
     public CreationsPage() { InitializeComponent(); }
 
+    /// <summary>Scans the creations directory and populates the UI list with available creations.</summary>
     public void Refresh()
     {
         var list = CreationStore.Scan();
@@ -18,6 +19,7 @@ public partial class CreationsPage : UserControl, IRefresh
         Empty.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>Exports the selected creation to an .mnrcreation file via a save dialog.</summary>
     void Export_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is not Creation c) return;
@@ -32,6 +34,7 @@ public partial class CreationsPage : UserControl, IRefresh
         catch (Exception ex) { MessageBox.Show(ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
+    /// <summary>Imports .mnrcreation files and resolves file collisions with existing creations.</summary>
     void Import_Click(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog { Filter = "ModNation creations (*.mnrcreation)|*.mnrcreation", Multiselect = true };
@@ -50,10 +53,12 @@ public partial class CreationsPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Opens the selected creation's folder in Windows Explorer, selecting the first file.</summary>
     void Show_Click(object sender, RoutedEventArgs e)
     {
         if (List.SelectedItem is Creation c && c.Files.Count > 0) Process.Start("explorer.exe", "/select,\"" + Path.Combine(Paths.CreationsDir, c.Files[0]) + "\"");
     }
+    /// <summary>Checks all creations for installation issues and displays the results in a message box.</summary>
     void Check_Click(object sender, RoutedEventArgs e)
     {
         var notes = CreationInstaller.Check();
@@ -61,5 +66,6 @@ public partial class CreationsPage : UserControl, IRefresh
         Refresh();
     }
 
+    /// <summary>Opens the global creations directory in Windows Explorer.</summary>
     void OpenFolder_Click(object sender, RoutedEventArgs e) { Directory.CreateDirectory(Paths.CreationsDir); Process.Start("explorer.exe", Paths.CreationsDir); }
 }

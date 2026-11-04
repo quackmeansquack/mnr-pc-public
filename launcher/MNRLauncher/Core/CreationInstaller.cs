@@ -25,9 +25,15 @@ public static class CreationInstaller
     public static string DataDir => Path.Combine(Paths.CreationsDir, "1", "DATA");
     static string IndexFile => Path.Combine(Paths.LauncherData, "installed.json");
 
+    /// <summary>Parsed CTH container: the decompressed creation body, metadata .CMD, local id, and creation name.</summary>
     public record Parsed(byte[] Body, byte[] Cmd, uint LocalId, string Name);
-    public record Entry(string Type, string Stem, bool RemixPatched = false);   // RemixPatched: launcher 2026.10.23.2245 changed its .CMD (UndoRemixPatches)
 
+    /// <summary>Index entry for an installed creation: type (KART/CHARACTER/TRACK), file stem, and whether the .CMD was
+    /// patched by launcher 2026.10.23.2245 (which set bit 0x80 of byte 0x8C to allow remixing).</summary>
+    public record Entry(string Type, string Stem, bool RemixPatched = false);
+
+    /// <summary>Parses a CTH container (data.bin from the server). Validates the header, decompresses the body,
+    /// and extracts the creation id and name from the metadata. Throws if the data is invalid.</summary>
     public static Parsed Parse(byte[] d)
     {
         if (d.Length < 12 || d[0] != 'C' || d[1] != 'T' || d[2] != 'H') throw new InvalidDataException("Not a creation file (no CTH header).");
@@ -40,6 +46,8 @@ public static class CreationInstaller
         return new Parsed(b, c, id, name);
     }
 
+    /// <summary>Parses a .CMD file: extracts the creation id (u32 at offset 0x60) and name (null-terminated string at 0x2C).
+    /// Reads up to 25 characters (ends at 0x46) to avoid truncating names like "Sonic Kart - Transformed2".</summary>
     public static (uint id, string name) ParseCmd(byte[] c)
     {
         if (c.Length < 0x64 || c[0] != 0xBF || c[1] != 0xDB || c[2] != 0x1A || c[3] != 0xCD) throw new InvalidDataException("Unexpected creation metadata.");
@@ -51,9 +59,10 @@ public static class CreationInstaller
 
     static uint BE(byte[] d, int o) => (uint)(d[o] << 24 | d[o + 1] << 16 | d[o + 2] << 8 | d[o + 3]);
 
+    /// <summary>Maps the API type string to the folder name the game expects: CHARACTER -> CHARACTER, KART -> VEHICLE, TRACK -> TRACK.</summary>
     public static string Folder(string apiType) => apiType switch { "CHARACTER" => "CHARACTER", "KART" => "VEHICLE", "TRACK" => "TRACK", _ => throw new InvalidDataException($"Unknown creation type {apiType}.") };
 
-    /// <summary>The name as the game spells it in the path; only characters Windows can't store are replaced.</summary>
+    /// <summary>Sanitizes a creation name for use in filenames: replaces characters Windows can't store with underscores.</summary>
     static string FileName(string name)
     {
         var bad = Path.GetInvalidFileNameChars();
@@ -61,6 +70,8 @@ public static class CreationInstaller
         return s.Length == 0 ? "Creation" : s;
     }
 
+    /// <summary>Loads the installed.json index file, which tracks which online creations are installed where.
+    /// Returns an empty dictionary if the file doesn't exist or can't be read.</summary>
     static Dictionary<string, Entry> LoadIndex()
     {
         try { if (File.Exists(IndexFile)) return JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(IndexFile)) ?? new(); }
@@ -73,14 +84,17 @@ public static class CreationInstaller
         File.WriteAllText(IndexFile, JsonSerializer.Serialize(ix, new JsonSerializerOptions { WriteIndented = true }));
     }
 
-    /// <summary>The installed files' common stem (without extension), if this creation is installed.</summary>
+    /// <summary>The installed files' common stem (without extension), if this creation is installed.
+    /// Returns null if the creation is not installed or its .CMD file is missing.</summary>
     public static string? Installed(RemoteCreation c)
     {
         var ix = LoadIndex();
         return ix.TryGetValue(c.Id.ToString(), out var e) && File.Exists(e.Stem + ".CMD") ? e.Stem : null;
     }
 
-    /// <summary>Installs from a launcher download folder (data.bin, preview.png, preview_small.png). Returns the stem.</summary>
+    /// <summary>Installs a downloaded creation from a launcher download folder (data.bin, preview.png, preview_small.png).
+    /// Writes the creation body, .CMD, .PNG, and _SMALL.PNG to the LOCAL folder. Returns the installed files' stem.
+    /// Throws if another creation already uses the same id.</summary>
     public static string Install(RemoteCreation c, string downloadDir)
     {
         var p = Parse(File.ReadAllBytes(Path.Combine(downloadDir, "data.bin")));
@@ -103,9 +117,9 @@ public static class CreationInstaller
         return stem;
     }
 
-    /// <summary>Launcher 2026.10.23.2245 set bit 0x80 of the .CMD byte at 0x8C on downloads to allow remixing; the game's
-    /// permission doesn't come from there (the studios' checks are overridden in the game instead, MNR_ALLOW_REMIX), so
-    /// those bytes are put back. Returns how many.</summary>
+    /// <summary>Launcher 2026.10.23.2245 set bit 0x80 of the .CMD byte at 0x8C on downloads to allow remixing;
+    /// the game's permission doesn't come from there (the studios' checks are overridden in the game instead,
+    /// MNR_ALLOW_REMIX), so those bytes are put back. Returns how many were fixed.</summary>
     const int RemixByte = 0x8C; const byte RemixBit = 0x80;
     public static int UndoRemixPatches()
     {
@@ -159,7 +173,7 @@ public static class CreationInstaller
         enc.Save(f);
     }
 
-    /// <summary>Redoes 64x64 small thumbnails left by earlier launcher versions. Returns how many.</summary>
+    /// <summary>Redoes 64x64 small thumbnails left by earlier launcher versions. Returns how many were fixed.</summary>
     public static int FixSmallThumbnails()
     {
         int n = 0;
@@ -179,7 +193,7 @@ public static class CreationInstaller
     }
 
     /// <summary>Renames downloads that earlier launcher versions installed under a name cut to 24 characters, so their
-    /// files carry the full name the game asks for. Returns how many.</summary>
+    /// files carry the full name the game asks for. Returns how many were renamed.</summary>
     public static int FixCutNames()
     {
         var ix = LoadIndex(); int n = 0;
@@ -201,9 +215,9 @@ public static class CreationInstaller
         return n;
     }
 
-    /// <summary>Looks over every creation the game keeps (LOCAL, UPLOAD, DOWNLOAD; characters, karts, tracks): renames
-    /// cut-short downloads and redoes small thumbnails, and reports what it can't fix (missing data or pictures, a name
-    /// whose id doesn't match its .CMD, two creations sharing an id). One line per finding; the first is a summary.</summary>
+    /// <summary>Comprehensive health check of every creation the game keeps (LOCAL, UPLOAD, DOWNLOAD; characters, karts, tracks):
+    /// renames cut-short downloads, redoes small thumbnails, and checks for missing data/pictures, id mismatches,
+    /// and duplicate ids. Returns one line per finding; the first line is a summary.</summary>
     public static List<string> Check()
     {
         var notes = new List<string>();
@@ -243,6 +257,7 @@ public static class CreationInstaller
         return notes;
     }
 
+    /// <summary>Removes all files for a downloaded creation from the LOCAL folder and updates the index.</summary>
     public static void Remove(RemoteCreation c)
     {
         var ix = LoadIndex();

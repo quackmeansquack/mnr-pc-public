@@ -28,12 +28,14 @@ namespace MNRLauncher.Core;
 /// </summary>
 public static class Updater
 {
+    /// <summary>A single file entry in the manifest: path, size, and SHA-256 checksum.</summary>
     public sealed class FileEntry
     {
         [JsonPropertyName("path")] public string Path { get; set; } = "";
         [JsonPropertyName("size")] public long Size { get; set; }
         [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
     }
+    /// <summary>A pack (zip asset) in the manifest: contains files, references a GitHub release, and has its own integrity hash.</summary>
     public sealed class Pack
     {
         [JsonPropertyName("name")] public string Name { get; set; } = "";
@@ -43,6 +45,7 @@ public static class Updater
         [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
         [JsonPropertyName("files")] public List<FileEntry> Files { get; set; } = new();
     }
+    /// <summary>The launcher self-update entry in the manifest: references a release, asset, size, and SHA-256.</summary>
     public sealed class LauncherEntry
     {
         [JsonPropertyName("release")] public string Release { get; set; } = "";
@@ -50,6 +53,7 @@ public static class Updater
         [JsonPropertyName("size")] public long Size { get; set; }
         [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
     }
+    /// <summary>The full manifest: release version, release notes, packs, and optional launcher self-update entry.</summary>
     public sealed class Manifest
     {
         [JsonPropertyName("version")] public string Version { get; set; } = "";
@@ -59,6 +63,7 @@ public static class Updater
     }
 
     // ---------------------------------------------------------------- account (per Windows user)
+    /// <summary>GitHub repository access credentials: repository name, DPAPI-encrypted token, and readiness check.</summary>
     public sealed class Account
     {
         public string Repo { get; set; } = "";              // owner/name
@@ -84,10 +89,12 @@ public static class Updater
 #else
     const string AppDataName = "MNRLauncher";
 #endif
+    /// <summary>The AppData directory for this launcher edition's GitHub account config.</summary>
     public static string AppDataDir => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppDataName);
     static string AccountFile => System.IO.Path.Combine(AppDataDir, "github.json");
     /// <summary>(public edition) the repository its releases come from: the PC runtime's source and the launcher.</summary>
     public const string PublicRepo = "quackmeansquack/mnr-pc-public";
+    /// <summary>Loads the GitHub account config from disk, falling back to a blank Account if the file is missing or corrupt.</summary>
     public static Account LoadAccount()
     {
         Account a;
@@ -98,6 +105,7 @@ public static class Updater
 #endif
         return a;
     }
+    /// <summary>Saves the GitHub account config to disk with formatted JSON.</summary>
     public static void SaveAccount(Account a)
     {
         Directory.CreateDirectory(AppDataDir);
@@ -105,6 +113,7 @@ public static class Updater
     }
 
     // ---------------------------------------------------------------- GitHub
+    /// <summary>Creates an HttpClient configured for GitHub API access with the given token.</summary>
     static HttpClient Client(string token)
     {
         var h = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true }) { Timeout = Timeout.InfiniteTimeSpan };
@@ -117,6 +126,7 @@ public static class Updater
     sealed class GhAsset { [JsonPropertyName("id")] public long Id { get; set; } [JsonPropertyName("name")] public string Name { get; set; } = ""; [JsonPropertyName("size")] public long Size { get; set; } }
     sealed class GhRelease { [JsonPropertyName("tag_name")] public string Tag { get; set; } = ""; [JsonPropertyName("assets")] public List<GhAsset> Assets { get; set; } = new(); }
 
+    /// <summary>Fetches a GitHub release by tag (or latest if tag is null) and parses it.</summary>
     static async Task<GhRelease> Release(HttpClient h, string repo, string? tag, CancellationToken ct)
     {
         var url = tag == null ? $"https://api.github.com/repos/{repo}/releases/latest" : $"https://api.github.com/repos/{repo}/releases/tags/{Uri.EscapeDataString(tag)}";
@@ -128,6 +138,7 @@ public static class Updater
         return JsonSerializer.Deserialize<GhRelease>(await r.Content.ReadAsStringAsync(ct)) ?? throw new IOException("GitHub sent an empty release.");
     }
 
+    /// <summary>Downloads a GitHub release asset to a file, verifying size if provided.</summary>
     static async Task Download(HttpClient h, string repo, long assetId, string to, long size, Action<long>? progress, CancellationToken ct)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{repo}/releases/assets/{assetId}");
@@ -141,6 +152,10 @@ public static class Updater
         if (size > 0 && got != size) throw new IOException($"Download incomplete ({got} of {size} bytes).");
     }
 
+    /// <summary>
+    /// Fetches and parses the manifest.json from the latest release (or a specific tag) of the configured repository.
+    /// Downloads the manifest asset to a temp file, parses it, then cleans up.
+    /// </summary>
     public static async Task<Manifest> FetchManifest(Account a, CancellationToken ct = default)
     {
         using var h = Client(a.Token);
@@ -156,7 +171,10 @@ public static class Updater
     }
 
     // ---------------------------------------------------------------- comparing with the disk
-    /// <summary>Hashes of files already checked, keyed by path, size and write time (hashing 16 GB each time is slow).</summary>
+    /// <summary>
+    /// Caches file hashes keyed by path, size, and write time to avoid re-hashing large files on every update check.
+    /// Persisted to disk as install_hashes.json in the launcher data directory.
+    /// </summary>
     sealed class HashCache { public Dictionary<string, string> Entries { get; set; } = new(); }
     static string CacheFile(string root) => System.IO.Path.Combine(root, "launcher", "data", "install_hashes.json");
     static HashCache LoadCache(string root)
@@ -169,11 +187,16 @@ public static class Updater
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CacheFile(root))!);
         File.WriteAllText(CacheFile(root), JsonSerializer.Serialize(c));
     }
+    /// <summary>Computes the SHA-256 hash of a file on disk.</summary>
     static string Sha256Of(string file)
     {
         using var s = File.OpenRead(file);
         return Convert.ToHexString(SHA256.HashData(s)).ToLowerInvariant();
     }
+    /// <summary>
+    /// Checks whether a file on disk matches the manifest entry, using the hash cache to avoid re-hashing.
+    /// Returns false if the file is missing, has a different size, or has a different hash.
+    /// </summary>
     static bool Matches(string root, FileEntry e, HashCache cache)
     {
         var full = System.IO.Path.Combine(root, e.Path.Replace('/', System.IO.Path.DirectorySeparatorChar));
@@ -184,9 +207,12 @@ public static class Updater
         return sha == e.Sha256;
     }
 
-    /// <summary>The release last installed in full (launcher\data\installed_release.txt). The update notice at start
-    /// compares releases, not files: files the game itself changes while playing aren't an update.</summary>
+    /// <summary>
+    /// Path to the file storing the last fully installed release version.
+    /// The update notice at start compares releases, not files: files the game itself changes while playing aren't an update.
+    /// </summary>
     static string InstalledFile(string root) => System.IO.Path.Combine(root, "launcher", "data", "installed_release.txt");
+    /// <summary>Returns the version string of the last fully installed release, or null if none is recorded.</summary>
     public static string? InstalledRelease(string root)
     {
         try { var f = InstalledFile(root); return File.Exists(f) ? File.ReadAllText(f).Trim() : null; } catch (Exception) { return null; }
@@ -199,13 +225,21 @@ public static class Updater
     public static bool LauncherOutdated(Manifest m) =>
         m.Launcher != null && m.Launcher.Sha256.Length > 0 && !string.Equals(Sha256Of(Environment.ProcessPath!), m.Launcher.Sha256, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Represents the update plan: what packs need downloading and whether the launcher itself needs updating.
+    /// </summary>
     public sealed record Plan(Manifest Manifest, List<Pack> Packs, bool LauncherUpdate)
     {
+        /// <summary>Total bytes that need to be downloaded.</summary>
         public long DownloadBytes => Packs.Sum(p => p.Size);
+        /// <summary>True if nothing needs to be downloaded and the launcher is not outdated.</summary>
         public bool UpToDate => Packs.Count == 0 && !LauncherUpdate;
     }
 
-    /// <summary>What has to be downloaded to bring <paramref name="root"/> up to the manifest.</summary>
+    /// <summary>
+    /// Compares the manifest against the installed files to determine which packs need downloading.
+    /// Uses the hash cache to speed up file verification. Returns an update plan with the packs to download.
+    /// </summary>
     public static Plan Compare(string root, Manifest m, Action<string>? status = null)
     {
         var cache = LoadCache(root);
@@ -221,7 +255,10 @@ public static class Updater
         return new Plan(m, need, LauncherOutdated(m));
     }
 
-    /// <summary>Downloads and unpacks what <paramref name="plan"/> lists. Progress: (bytes done, bytes total, text).</summary>
+    /// <summary>
+    /// Downloads and unpacks the packs listed in <paramref name="plan"/>, updating the launcher if needed.
+    /// Verifies each downloaded pack's SHA-256 hash before unpacking. Progress callback reports (bytes done, bytes total, status text).
+    /// </summary>
     public static async Task Apply(string root, Account a, Plan plan, Action<long, long, string> progress, CancellationToken ct = default)
     {
         using var h = Client(a.Token);
@@ -282,14 +319,20 @@ public static class Updater
         progress(total, total, "Up to date.");
     }
 
-    /// <summary>Restarts the (new) launcher.</summary>
+    /// <summary>
+    /// Restarts the launcher by launching a new instance of the current executable, then shutting down the current WPF application.
+    /// Used after a launcher self-update to run the new version.
+    /// </summary>
     public static void Restart()
     {
         Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true });
         System.Windows.Application.Current.Shutdown();
     }
 
-    /// <summary>The previous launcher, left by a self-update, is deleted on the next start.</summary>
+    /// <summary>
+    /// Deletes the old launcher executable left behind by a self-update (launcher.exe.old).
+    /// Called on launcher start to clean up after previous updates.
+    /// </summary>
     public static void CleanUpOldLauncher()
     {
         try { var old = Environment.ProcessPath + ".old"; if (File.Exists(old)) File.Delete(old); } catch (Exception) { }

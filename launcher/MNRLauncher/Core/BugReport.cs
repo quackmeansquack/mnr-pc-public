@@ -11,8 +11,14 @@ namespace MNRLauncher.Core;
 /// game's settings with every password and token blanked, and the versions. Saved in logs\ and shown in Explorer.</summary>
 public static class BugReport
 {
+    /// <summary>JSON keys whose values are blanked when including launcher settings in the bug report.</summary>
     static readonly string[] Secret = { "RpcnPasswordProtected", "RpcnToken", "TokenProtected" };
 
+    /// <summary>
+    /// Creates a zip file containing: the last 3 game logs, last_run.txt, the last 200 lines of rpcn.log,
+    /// pc_settings.ini, launcher_settings.json (with passwords/tokens blanked), and version info.
+    /// Returns the path to the generated zip file.
+    /// </summary>
     public static string Make()
     {
         var zipPath = Path.Combine(Paths.LogsDir, $"bug_report_{DateTime.Now:yyyy-MM-dd_HH-mm}.zip");
@@ -50,6 +56,10 @@ public static class BugReport
 
     /// <summary>The newest game log, if that session ended in a crash (host.c's crash handler, or a jump to code the
     /// recompiler doesn't have): its file name and when it was written.</summary>
+    /// <summary>
+    /// Checks the newest game log for crash markers (host exception or unrecompilable JIT function).
+    /// Returns the log file name and timestamp if a crash is detected, null otherwise.
+    /// </summary>
     public static (string file, DateTime when)? LastCrash()
     {
         try
@@ -65,6 +75,7 @@ public static class BugReport
         catch (Exception) { return null; }
     }
 
+    /// <summary>Creates a bug report zip and opens Windows Explorer with it selected.</summary>
     public static void MakeAndShow()
     {
         try { var p = Make(); Process.Start("explorer.exe", $"/select,\"{p}\""); }
