@@ -14,7 +14,7 @@
 
 #define MAX_PORTS 8
 #define BLOCK 256
-typedef struct { int open, started; uint32_t addr, nch, nblk, size, index_addr; uint64_t blk; float level; int filling; float last_l, last_r; } port_t;
+typedef struct { int open, started; uint32_t addr, nch, nblk, size, index_addr; uint64_t blk; float level; int filling, gapped; float last_l, last_r; } port_t;
 static port_t ports[MAX_PORTS];
 static uint32_t index_area;   /* guest: 8 x u64 read indices */
 static SRWLOCK lock = SRWLOCK_INIT;
@@ -22,8 +22,8 @@ static SRWLOCK lock = SRWLOCK_INIT;
 /* ---- waveOut stream: 16 buffers of 4 blocks (1024 stereo frames, ~21 ms) */
 #define NBUF 16
 #define BUF_FRAMES (4 * BLOCK)
-#define SIL_BUF 4        /* silence buffers queued ahead of the game's audio: an ~85 ms cushion */
-#define LATE_BLOCKS 12   /* how long a block the game is filling may be waited for (~64 ms) */
+#define SIL_BUF 6        /* silence buffers queued ahead of the game's audio: an ~128 ms cushion */
+#define LATE_BLOCKS 20   /* how long a block the game is filling may be waited for (~107 ms, the cushion's limit) */
 static HWAVEOUT wo;
 static WAVEHDR hdr[NBUF];
 static int16_t pcm[NBUF][BUF_FRAMES * 2];
@@ -81,6 +81,7 @@ static void out_open(void) {
     if (waveOutOpen(&wo, WAVE_MAPPER, &f, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) { wo = NULL; return; }
     for (int i = 0; i < NBUF; i++) { hdr[i].lpData = (LPSTR)pcm[i]; hdr[i].dwBufferLength = sizeof pcm[i]; hdr[i].dwFlags = WHDR_DONE; }
     for (int i = 0; i < SIL_BUF; i++) { sil_hdr[i].lpData = (LPSTR)sil_pcm; sil_hdr[i].dwBufferLength = sizeof sil_pcm; sil_hdr[i].dwFlags = WHDR_DONE; }
+    out_queue_silence();   /* prime the cushion here: the first dry-check would otherwise count startup as a dry run */
     /* full app volume: Windows keeps an app's volume between runs, and earlier silent test runs set it to 0 */
     waveOutSetVolume(wo, 0xFFFFFFFF);
 }
@@ -90,9 +91,15 @@ static void out_prime_if_dry(void) {
     starved++;
     out_queue_silence();
 }
+static int out_queued(void) {   /* buffers still waiting in the device, in BUF_FRAMES units */
+    int q = 0;
+    for (int i = 0; i < NBUF; i++) if (!(hdr[i].dwFlags & WHDR_DONE)) q++;
+    for (int i = 0; i < SIL_BUF; i++) if (!(sil_hdr[i].dwFlags & WHDR_DONE)) q++;
+    return q;
+}
 /* Races mix many loud sounds at once and the surround downmix adds channels together, so peaks go past full
  * scale: hard clipping crackles. Above 0.9 the level bends smoothly towards 1.0 instead. */
-static volatile long st_clipped, st_late, st_missed, st_maxwait;
+static volatile long st_clipped, st_late, st_missed, st_maxwait, st_dropped, st_maxstall;
 static float soft_limit(float v) {
     float a = fabsf(v);
     if (a <= 0.9f) return v;
@@ -105,7 +112,7 @@ static void out_frames(const float *lr, int n) {   /* n stereo frames */
     for (int i = 0; i < n; i++) {
         WAVEHDR *h = &hdr[cur_buf];
         if (cur_frames == 0) {
-            if (!(h->dwFlags & WHDR_DONE)) return;   /* device behind: drop rather than stall the game */
+            if (!(h->dwFlags & WHDR_DONE)) { st_dropped++; return; }   /* device behind: drop rather than stall the game */
             if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(wo, h, sizeof *h);
             out_prime_if_dry();   /* queue the cushion while this buffer fills, not after it */
         }
@@ -144,10 +151,13 @@ static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of po
     if (st == 1) {   /* nothing new: fade out from where the sound stopped instead of cutting to silence */
         for (int s = 0; s < 64; s++) { float g = 1.0f - s / 64.0f; lr[2 * s] += p->last_l * g; lr[2 * s + 1] += p->last_r * g; }
         p->last_l = p->last_r = 0;
+        p->gapped = 1;   /* the block after the gap fades in: resuming at a random waveform phase clicks */
         return;
     }
     if (ld_u32(base) == TAG) st_u32(base, 0);
     if (ld_u32(blk_last(p, b)) == TAG) st_u32(blk_last(p, b), 0);
+    int fadein = p->gapped ? 64 : 0;
+    p->gapped = 0;
     for (int s = 0; s < BLOCK; s++) {
         float ch[8] = {0};
         for (uint32_t c = 0; c < p->nch && c < 8; c++) ch[c] = ld_f32(base + (s * p->nch + c) * 4);
@@ -157,6 +167,7 @@ static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of po
             r = ch[1] + 0.707f * ch[2] + 0.707f * ch[5] + 0.5f * ch[7];
         } else if (p->nch == 1) l = r = ch[0];
         else { l = ch[0]; r = ch[1]; }
+        if (s < fadein) { float g = (float)(s + 1) / 64.0f; l *= g; r *= g; }
         lr[2 * s] += l * p->level; lr[2 * s + 1] += r * p->level;
         p->last_l = l * p->level; p->last_r = r * p->level;
     }
@@ -189,16 +200,20 @@ static DWORD WINAPI audio_thread(void *arg) {
     uint64_t done = 0;
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);   /* the game threads must not delay it */
     if (!muted) out_open();
-    DWORD last_report = GetTickCount(), last_stats = last_report; long last_starved = 0;
-    LONGLONG wait_from = 0;
+    DWORD last_report = GetTickCount(), last_stats = last_report; long last_starved = 0, last_starved_stats = 0;
+    LONGLONG wait_from = 0, stall_from = 0;
+    uint64_t wait_limit = 0;
     for (;;) {
         Sleep(1);
         if (GetTickCount() - last_stats >= 30000) {   /* how the game kept up, every 30 s when anything happened */
             last_stats = GetTickCount();
-            if (st_late || st_missed || st_clipped)
-                printf("[audio] last 30 s: %ld blocks late, %ld missed, %ld samples over full scale, longest wait %ld ms\n",
-                       st_late, st_missed, st_clipped, (long)(st_maxwait * 1000LL / 48000));
-            st_late = st_missed = st_clipped = st_maxwait = 0;
+            long dry = starved - last_starved_stats;
+            if (st_late || st_missed || st_dropped || st_clipped || dry)
+                printf("[audio] last 30 s: %ld blocks late, %ld missed, %ld dropped, %ld samples over full scale, %ld dry, longest wait %ld ms, longest stall %ld ms\n",
+                       st_late, st_missed, st_dropped, st_clipped, dry,
+                       (long)(st_maxwait * 1000LL / 48000), (long)(st_maxstall * 1000LL / 48000));
+            last_starved_stats = starved;
+            st_late = st_missed = st_dropped = st_clipped = st_maxwait = st_maxstall = 0;
         }
         if (silent_test && GetTickCount() - last_report >= 5000) {
             last_report = GetTickCount();
@@ -223,12 +238,31 @@ static DWORD WINAPI audio_thread(void *arg) {
             ReleaseSRWLockShared(&lock);
             if (late) {
                 QueryPerformanceCounter(&t);
-                if (!wait_from) wait_from = t.QuadPart;
+                if (!wait_from) {
+                    wait_from = t.QuadPart;
+                    if (!stall_from) stall_from = t.QuadPart;
+                    /* the grace is fixed when the wait starts: recalculating it as the queue drains would
+                     * cut every long wait short and skip blocks the cushion still had room to wait for */
+                    int q = out_queued();
+                    wait_limit = (uint64_t)LATE_BLOCKS * BLOCK;
+                    uint64_t cushion = q > 1 ? (uint64_t)(q - 1) * BUF_FRAMES : 0;
+                    if (cushion < wait_limit) wait_limit = cushion;
+                }
                 uint64_t waited = (uint64_t)(t.QuadPart - wait_from) * 48000 / f.QuadPart;
                 if (waited > (uint64_t)st_maxwait) st_maxwait = (long)waited;
-                if (waited < LATE_BLOCKS * BLOCK) break;   /* look again next ms */
+                if (waited < wait_limit) break;   /* look again next ms */
+                uint64_t stall = (uint64_t)(t.QuadPart - stall_from) * 48000 / f.QuadPart;
+                if (stall > (uint64_t)st_maxstall) st_maxstall = (long)stall;
                 st_missed++;
-            } else if (wait_from) st_late++;
+            } else {
+                if (wait_from) st_late++;
+                if (stall_from) {
+                    QueryPerformanceCounter(&t);
+                    uint64_t stall = (uint64_t)(t.QuadPart - stall_from) * 48000 / f.QuadPart;
+                    if (stall > (uint64_t)st_maxstall) st_maxstall = (long)stall;
+                    stall_from = 0;
+                }
+            }
             wait_from = 0;
             done++;
             float lr[BLOCK * 2] = {0};
