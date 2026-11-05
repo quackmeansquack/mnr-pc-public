@@ -22,8 +22,8 @@ static SRWLOCK lock = SRWLOCK_INIT;
 /* ---- waveOut stream: 16 buffers of 4 blocks (1024 stereo frames, ~21 ms) */
 #define NBUF 16
 #define BUF_FRAMES (4 * BLOCK)
-#define SIL_BUF 6        /* silence buffers queued ahead of the game's audio: an ~128 ms cushion */
-#define LATE_BLOCKS 20   /* how long a block the game is filling may be waited for (~107 ms, the cushion's limit) */
+#define SIL_BUF 8        /* silence buffers queued ahead of the game's audio: an ~170 ms cushion */
+#define LATE_BLOCKS 24   /* how long a block the game is filling may be waited for (~128 ms, the cushion's limit) */
 static HWAVEOUT wo;
 static WAVEHDR hdr[NBUF];
 static int16_t pcm[NBUF][BUF_FRAMES * 2];
@@ -148,9 +148,11 @@ static void blk_clear(port_t *p, uint64_t b) {
 static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of port p into lr[256 * 2] */
     uint32_t base = blk_base(p, b);
     int st = blk_state(p, b);
-    if (st == 1) {   /* nothing new: fade out from where the sound stopped instead of cutting to silence */
-        for (int s = 0; s < 64; s++) { float g = 1.0f - s / 64.0f; lr[2 * s] += p->last_l * g; lr[2 * s + 1] += p->last_r * g; }
-        p->last_l = p->last_r = 0;
+    if (st == 1) {   /* nothing new: decay the last good sample across the whole block instead of a short
+                       * fade that leaves a silence gap (which sounded like clipping on loud transients) */
+        for (int s = 0; s < BLOCK; s++) { float g = expf(-(float)s / 32.0f); lr[2 * s] += p->last_l * g; lr[2 * s + 1] += p->last_r * g; }
+        p->last_l *= expf(-(float)BLOCK / 32.0f);
+        p->last_r *= expf(-(float)BLOCK / 32.0f);
         p->gapped = 1;   /* the block after the gap fades in: resuming at a random waveform phase clicks */
         return;
     }

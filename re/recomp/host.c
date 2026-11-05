@@ -250,6 +250,7 @@ static void cell_sysutil_register_callback(ctx_t *c) {   /* (slot, func opd, use
  * PPU threads are host threads (each with its own ctx_t, guest stack and TLS block). Guest sync
  * objects map to host ones, keyed by guest address (lw* objects) or by kernel id. */
 #define CELL_EBUSY     0x8001000Au
+#define CELL_EINVAL    0x80010002u
 #define CELL_ETIMEDOUT 0x8001000Bu
 #define CELL_ESRCH     0x80010005u
 #define CELL_EAGAIN    0x80010001u
@@ -1986,6 +1987,48 @@ static uint64_t rtc_tick_now(void) {   /* CellRtcTick: microseconds since 0001-0
     return t100 / 10 + 50491123200000000ULL;                                 /* 0001 -> 1601 */
 }
 static void rtc_get_current_tick(ctx_t *c) { st_u64(ARG32(0), rtc_tick_now()); RET(0); }
+static int rtc_leap(uint32_t y) { return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0); }
+/* CellRtcDateTime: u16 year, month, day, hour, minute, second; u32 microsecond (16 bytes). */
+static uint64_t rtc_date_to_tick(const uint16_t *d) {
+    uint32_t y = d[0] ? d[0] : 1, m = d[1] >= 1 && d[1] <= 12 ? d[1] : 1, dd = d[2] ? d[2] : 1;
+    static const uint16_t cum[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+    uint64_t days = 365ull * y + (y + 3) / 4 - (y + 99) / 100 + (y + 399) / 400 - 366;   /* y*365-366 == (y-1)*365+leaps */
+    days += cum[m - 1] + ((m > 2 && rtc_leap(y)) ? 1 : 0) + dd - 1;
+    return d[6] + 1000000ull * (d[5] + 60ull * (d[4] + 60ull * (d[3] + 24ull * days)));
+}
+static void rtc_tick_to_date(uint64_t t, uint16_t *d) {
+    d[6] = (uint16_t)(t % 1000000); t /= 1000000;
+    d[5] = (uint16_t)(t % 60); t /= 60;
+    d[4] = (uint16_t)(t % 60); t /= 60;
+    d[3] = (uint16_t)(t % 24); t /= 24;   /* days since 0001-01-01 */
+    uint32_t y = 1;
+    while (t >= (rtc_leap(y) ? 366u : 365u)) { t -= rtc_leap(y) ? 366u : 365u; y++; }
+    d[0] = (uint16_t)y;
+    static const uint8_t md[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    uint32_t m = 1;
+    while (m < 12 && t >= md[m - 1] + (m == 2 && rtc_leap(y))) { t -= md[m - 1] + (m == 2 && rtc_leap(y)); m++; }
+    d[1] = (uint16_t)m;
+    d[2] = (uint16_t)(t + 1);
+}
+static void rtc_set_tick(ctx_t *c) {   /* (CellRtcDateTime *date, const CellRtcTick *tick) */
+    uint16_t d[7] = {0};
+    rtc_tick_to_date(ARG32(1) ? ld_u64(ARG32(1)) : 0, d);
+    uint32_t p = ARG32(0);
+    if (p) { for (int i = 0; i < 6; i++) st_u16(p + 2u * (uint32_t)i, d[i]); st_u32(p + 12, d[6]); }
+    RET(0);
+}
+static void rtc_utc_to_local(ctx_t *c) {   /* (const CellRtcTick *utc, CellRtcTick *local) */
+    if (ARG32(1)) st_u64(ARG32(1), ARG32(0) ? ld_u64(ARG32(0)) : rtc_tick_now());   /* host clock is UTC */
+    RET(0);
+}
+static void rtc_win32_file_time(ctx_t *c) {   /* (const CellRtcDateTime *date, u64 *filetime) */
+    uint16_t d[7] = {0};
+    uint32_t p = ARG32(0);
+    if (p) { for (int i = 0; i < 6; i++) d[i] = ld_u16(p + 2u * (uint32_t)i); d[6] = (uint16_t)ld_u32(p + 12); }
+    uint64_t t = rtc_date_to_tick(d);
+    if (ARG32(1)) st_u64(ARG32(1), t >= 50491123200000000ULL ? (t - 50491123200000000ULL) * 10 : 0);
+    RET(0);
+}
 static void game_create_game_data(ctx_t *c) {   /* (init*, char tmpContentInfoPath[128], char tmpUsrdirPath[128]) */
     char b[160], hp[MAX_PATH];
     if (strncmp(game_content, "/dev_hdd0/game/", 15)) {
@@ -2426,6 +2469,13 @@ static void np_basic_count0_arg0(ctx_t *c) { if (ARG32(0)) st_u32(ARG32(0), 0); 
  * list; there is none here, so it is accepted (the game warned "AddRecentPlayer failed!" after every online race) */
 static void np_basic_add_players_history(ctx_t *c) { static uint32_t req; if (ARG32(3)) st_u32(ARG32(3), ++req); RET(0); }
 static void np_basic_count0_arg1(ctx_t *c) { if (ARG32(1)) st_u32(ARG32(1), 0); RET(0); }   /* players history (options, u32 *count) */
+/* sceNpCommerce2CreateCtx(u32 version, void *ctx): the store is offline, so no context; clear the out slot
+ * (returning success without writing it left the game reading stack garbage). */
+static void np_commerce2_create_ctx(ctx_t *c) {
+    uint32_t p = ARG32(1);
+    if (p >= 0x10000 && p < COMMIT) st_u32(p, 0);
+    RET(0);
+}
 
 /* ------------------------------------------------------------------ sceNpBasic: friends, presence, messages
  * As RPCS3 answers them from its RPCN client. The RPCN session is the launcher's (one sign-in per account), so the
@@ -3495,7 +3545,12 @@ static void cell_fs_open(ctx_t *c) {   /* (path, flags, *fd, arg, size) */
     for (int tries = 0; !f && acc != 0 && tries < 40 && GetLastError() == ERROR_SHARING_VIOLATION; tries++) { Sleep(50); f = fopen(hp, mode); }
     if (fs_log) { static LARGE_INTEGER q0, qf; if (!q0.QuadPart) { QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q0); } LARGE_INTEGER q; QueryPerformanceCounter(&q);
                   printf("[fs] open %s (flags 0x%x) -> %s at %.2f s\n", g, flags, f ? "ok" : "ENOENT", (double)(q.QuadPart - q0.QuadPart) / qf.QuadPart); }
-    if (!f) { RET(CELL_FS_ENOENT); return; }
+    if (!f) {   /* say why: the game only reports "failed", which hides open vs read problems */
+        HANDLE probe = CreateFileA(hp, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, 0, NULL);
+        if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); fprintf(stderr, "[fs] open %s: fopen failed but CreateFile succeeds (CRT/sharing)\n", g); }
+        else fprintf(stderr, "[fs] open %s: win32 error %lu\n", g, (unsigned long)GetLastError());
+        RET(CELL_FS_ENOENT); return;
+    }
     fsh_t *h = calloc(1, sizeof *h); h->f = f; snprintf(h->path, sizeof h->path, "%s", hp);
     { size_t L = strlen(g); if (L > 4 && !_stricmp(g + L - 4, ".BIK")) { h->movie = 1; InterlockedIncrement(&fs_movies_open); } }
     {   /* MNR_AUTODRIVE_AFTER=<file>:<seconds> (benchmarks): no more Start presses once <file> is opened, driving <seconds> later */
@@ -3524,7 +3579,7 @@ static void cell_fs_open(ctx_t *c) {   /* (path, flags, *fd, arg, size) */
     }
     {   size_t L = strlen(g); if (L > 4 && !_stricmp(g + L - 4, ".TRK")) race_track_opened = 1; }   /* MNR_AI_PLAYER=2 */
     int fd = fs_alloc(h);
-    if (fd < 0) { fclose(f); free(h); RET(CELL_FS_EMFILE); return; }
+    if (fd < 0) { fclose(f); free(h); fprintf(stderr, "[fs] open %s: no free handles (256 in use)\n", g); RET(CELL_FS_EMFILE); return; }
     st_u32(ARG32(2), (uint32_t)fd);
     RET(0);
 }
@@ -3541,7 +3596,13 @@ static void ww_touch(uint32_t addr, size_t n) {
 static void cell_fs_read(ctx_t *c) {   /* (fd, buf, nbytes, *nread) */
     fsh_t *h = fs_get(ARG32(0));
     if (!h || !h->f) { RET(CELL_FS_EBADF); return; }
-    size_t n = fread(gp(ARG32(1)), 1, (size_t)ARG(2), h->f);
+    size_t want = (size_t)ARG(2);
+    size_t n = fread(gp(ARG32(1)), 1, want, h->f);
+    if (n == 0 && want) {   /* the game only says "failed"; name the file and the reason */
+        const char *bn = strrchr(h->path, '\\'); bn = bn ? bn + 1 : h->path;
+        fprintf(stderr, "[fs] read %s: 0 of %zu bytes%s (win32 %lu)\n", bn, want,
+                ferror(h->f) ? ", error" : " at end of file", (unsigned long)GetLastError());
+    }
     ww_touch(ARG32(1), n);
     if (ARG32(3)) st_u64(ARG32(3), n);
     if (h->movie && n) { LARGE_INTEGER q; QueryPerformanceCounter(&q); fs_movie_read_qpc = q.QuadPart; }
@@ -3782,6 +3843,9 @@ static const struct { const char *name; hle_fn fn; } hle_table[] = {
     {"sysPrxForUser::sys_ppu_thread_exit", ppu_thread_exit},
     {"cellSysutil::cellSysutilGetSystemParamInt", sysutil_get_param_int},
     {"cellRtc::cellRtcGetCurrentTick", rtc_get_current_tick},
+    {"cellRtc::cellRtcSetTick", rtc_set_tick},
+    {"cellRtc::cellRtcConvertUtcToLocalTime", rtc_utc_to_local},
+    {"cellRtc::cellRtcGetWin32FileTime", rtc_win32_file_time},
     {"cellGame::cellGameCreateGameData", game_create_game_data},
     {"cellGame::cellGameSetParamString", hle_ok},
     {"cellSysutil::cellMsgDialogOpen2", msg_dialog_open},
@@ -3793,6 +3857,7 @@ static const struct { const char *name; hle_fn fn; } hle_table[] = {
     {"cellSysutil::cellSaveDataAutoLoad2", save_data_auto_load2},
     {"cellSysutil::cellSaveDataAutoSave2", save_data_auto_save2},
     {"sceNp::sceNpInit", hle_ok},
+    {"sceNp::sceNpDrmIsAvailable", hle_ok},   /* the game's own data is always "available" */
     {"sceNp::sceNpManagerGetStatus", np_manager_get_status},
     {"sceNp::sceNpManagerRegisterCallback", np_manager_register_callback},
     {"sceNp::sceNpManagerUnregisterCallback", np_manager_unregister_callback},
@@ -3835,6 +3900,9 @@ static const struct { const char *name; hle_fn fn; } hle_table[] = {
     {"sceNp::sceNpSignalingDestroyCtx", np_signaling_destroy_ctx},
     {"sceNp::sceNpSignalingGetConnectionStatus", np_signaling_get_connection_status},
     {"sceNp::sceNpSignalingTerminateConnection", np_signaling_terminate_connection},
+    {"sceNpCommerce2::sceNpCommerce2Init", hle_ok},
+    {"sceNpCommerce2::sceNpCommerce2Term", hle_ok},
+    {"sceNpCommerce2::sceNpCommerce2CreateCtx", np_commerce2_create_ctx},
     {"cellSsl::cellSslCertificateLoader", ssl_certificate_loader},
     {"cellNetCtl::cellNetCtlNetStartDialogLoadAsync", net_ctl_netstart_load},
     {"cellNetCtl::cellNetCtlNetStartDialogUnloadAsync", net_ctl_netstart_unload},
@@ -4031,6 +4099,16 @@ static void hle_syscall_inner(ctx_t *c) {
         return;
     }
     case 1: RET(0x01000500 >> 8); return;   /* sys_process_getpid */
+    case 12: {  /* sys_process_get_number_of_object(object, u32 *count) */
+        /* lv2 object types are 1..0x13; anything else is CELL_EINVAL. The count must be written:
+         * returning success without it left the game reading stack garbage. Our kobj table is
+         * untyped, so valid types report none. */
+        uint32_t obj = ARG32(0);
+        if (obj < 1 || obj > 0x13) { RET(CELL_EINVAL); return; }
+        if (ARG32(1)) st_u32(ARG32(1), 0);
+        RET(0);
+        return;
+    }
     case 100: ksys_mutex_create(c); return;       /* sys_mutex_create(*id, attr) */
     case 101: RET(0); return;                      /* sys_mutex_destroy */
     case 102: ksys_mutex_lock(c); return;          /* sys_mutex_lock(id, timeout) */
