@@ -22,15 +22,18 @@ static SRWLOCK lock = SRWLOCK_INIT;
 /* ---- waveOut stream: 16 buffers of 4 blocks (1024 stereo frames, ~21 ms) */
 #define NBUF 16
 #define BUF_FRAMES (4 * BLOCK)
+#define SIL_BUF 4        /* silence buffers queued ahead of the game's audio: an ~85 ms cushion */
+#define LATE_BLOCKS 12   /* how long a block the game is filling may be waited for (~64 ms) */
 static HWAVEOUT wo;
 static WAVEHDR hdr[NBUF];
 static int16_t pcm[NBUF][BUF_FRAMES * 2];
 static int cur_buf, cur_frames, muted = -1;
-/* When the device runs dry (nothing queued), the next buffer goes out behind two buffers of silence so
- * scheduling jitter doesn't starve it again at once: without a cushion every hiccup was a click, and under
- * load (movies) the clicks ran together into warble. MNR_AUDIO_SILENT=1 drives the device with silent samples
- * and reports how often it ran dry (testing without sound). */
-static WAVEHDR sil_hdr[2];
+/* The device is primed with a few buffers of silence so the queue always holds about SIL_BUF buffers of
+ * audio. A block the game is still filling can then be waited for instead of skipped, and a short stall
+ * does not leave the device dry (without a cushion every hiccup was a click, and under load the clicks ran
+ * together into warble). MNR_AUDIO_SILENT=1 drives the device with silent samples and reports how often it
+ * ran dry (testing without sound). */
+static WAVEHDR sil_hdr[SIL_BUF];
 static int16_t sil_pcm[BUF_FRAMES * 2];
 static volatile long starved;
 static int silent_test;
@@ -65,27 +68,31 @@ static void voice_mix(float *lr, int n) {
     ReleaseSRWLockExclusive(&vlock);
 }
 
+static void out_queue_silence(void) {
+    for (int i = 0; i < SIL_BUF; i++) {
+        WAVEHDR *h = &sil_hdr[i];
+        if (!(h->dwFlags & WHDR_DONE)) continue;
+        if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(wo, h, sizeof *h);
+        h->dwFlags = 0; waveOutPrepareHeader(wo, h, sizeof *h); waveOutWrite(wo, h, sizeof *h);
+    }
+}
 static void out_open(void) {
     WAVEFORMATEX f = {WAVE_FORMAT_PCM, 2, 48000, 48000 * 4, 4, 16, 0};
     if (waveOutOpen(&wo, WAVE_MAPPER, &f, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) { wo = NULL; return; }
     for (int i = 0; i < NBUF; i++) { hdr[i].lpData = (LPSTR)pcm[i]; hdr[i].dwBufferLength = sizeof pcm[i]; hdr[i].dwFlags = WHDR_DONE; }
-    for (int i = 0; i < 2; i++) { sil_hdr[i].lpData = (LPSTR)sil_pcm; sil_hdr[i].dwBufferLength = sizeof sil_pcm; sil_hdr[i].dwFlags = WHDR_DONE; }
+    for (int i = 0; i < SIL_BUF; i++) { sil_hdr[i].lpData = (LPSTR)sil_pcm; sil_hdr[i].dwBufferLength = sizeof sil_pcm; sil_hdr[i].dwFlags = WHDR_DONE; }
     /* full app volume: Windows keeps an app's volume between runs, and earlier silent test runs set it to 0 */
     waveOutSetVolume(wo, 0xFFFFFFFF);
 }
 static void out_prime_if_dry(void) {
     for (int i = 0; i < NBUF; i++) if (!(hdr[i].dwFlags & WHDR_DONE)) return;   /* something still queued */
-    for (int i = 0; i < 2; i++) if (!(sil_hdr[i].dwFlags & WHDR_DONE)) return;
+    for (int i = 0; i < SIL_BUF; i++) if (!(sil_hdr[i].dwFlags & WHDR_DONE)) return;
     starved++;
-    for (int i = 0; i < 2; i++) {
-        WAVEHDR *h = &sil_hdr[i];
-        if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(wo, h, sizeof *h);
-        h->dwFlags = 0; waveOutPrepareHeader(wo, h, sizeof *h); waveOutWrite(wo, h, sizeof *h);
-    }
+    out_queue_silence();
 }
 /* Races mix many loud sounds at once and the surround downmix adds channels together, so peaks go past full
  * scale: hard clipping crackles. Above 0.9 the level bends smoothly towards 1.0 instead. */
-static volatile long st_clipped, st_late, st_missed;
+static volatile long st_clipped, st_late, st_missed, st_maxwait;
 static float soft_limit(float v) {
     float a = fabsf(v);
     if (a <= 0.9f) return v;
@@ -100,6 +107,7 @@ static void out_frames(const float *lr, int n) {   /* n stereo frames */
         if (cur_frames == 0) {
             if (!(h->dwFlags & WHDR_DONE)) return;   /* device behind: drop rather than stall the game */
             if (h->dwFlags & WHDR_PREPARED) waveOutUnprepareHeader(wo, h, sizeof *h);
+            out_prime_if_dry();   /* queue the cushion while this buffer fills, not after it */
         }
         for (int k = 0; k < 2; k++) {
             float v = soft_limit(lr[2 * i + k] * master());
@@ -188,8 +196,9 @@ static DWORD WINAPI audio_thread(void *arg) {
         if (GetTickCount() - last_stats >= 30000) {   /* how the game kept up, every 30 s when anything happened */
             last_stats = GetTickCount();
             if (st_late || st_missed || st_clipped)
-                printf("[audio] last 30 s: %ld blocks late, %ld missed, %ld samples over full scale\n", st_late, st_missed, st_clipped);
-            st_late = st_missed = st_clipped = 0;
+                printf("[audio] last 30 s: %ld blocks late, %ld missed, %ld samples over full scale, longest wait %ld ms\n",
+                       st_late, st_missed, st_clipped, (long)(st_maxwait * 1000LL / 48000));
+            st_late = st_missed = st_clipped = st_maxwait = 0;
         }
         if (silent_test && GetTickCount() - last_report >= 5000) {
             last_report = GetTickCount();
@@ -200,8 +209,9 @@ static DWORD WINAPI audio_thread(void *arg) {
         uint64_t due = (uint64_t)(t.QuadPart - t0.QuadPart) * 48000 / BLOCK / f.QuadPart;
         if (due > done + 32) done = due - 32;   /* after a long stall don't try to catch up forever */
         while (done < due) {
-            /* RPCS3's rule: a port the game is filling gets up to two periods' grace for a block it hasn't
-             * refilled yet (it falls behind for a moment), then the block plays as it is */
+            /* A port the game is filling gets a few periods' grace for a block it hasn't refilled yet (it
+             * falls behind for a moment), then the block plays as it is. The output cushion above covers the
+             * wait, so waiting is better than skipping the block. */
             int late = 0;
             AcquireSRWLockShared(&lock);
             for (int i = 0; i < MAX_PORTS; i++) {
@@ -214,7 +224,9 @@ static DWORD WINAPI audio_thread(void *arg) {
             if (late) {
                 QueryPerformanceCounter(&t);
                 if (!wait_from) wait_from = t.QuadPart;
-                if ((uint64_t)(t.QuadPart - wait_from) * 48000 / f.QuadPart < 2 * BLOCK) break;   /* look again next ms */
+                uint64_t waited = (uint64_t)(t.QuadPart - wait_from) * 48000 / f.QuadPart;
+                if (waited > (uint64_t)st_maxwait) st_maxwait = (long)waited;
+                if (waited < LATE_BLOCKS * BLOCK) break;   /* look again next ms */
                 st_missed++;
             } else if (wait_from) st_late++;
             wait_from = 0;
@@ -286,7 +298,15 @@ int audio_port_config(uint32_t port, uint32_t cfg) {   /* CellAudioPortConfig {u
     st_u32(cfg + 24, p->size); st_u32(cfg + 28, p->addr);
     return 0;
 }
-int audio_port_start(uint32_t port) { if (port >= MAX_PORTS || !ports[port].open) return -1; ports[port].started = 1; return 0; }
+int audio_port_start(uint32_t port) {
+    if (port >= MAX_PORTS || !ports[port].open) return -1;
+    AcquireSRWLockExclusive(&lock);
+    ports[port].filling = 1;   /* wait for the first block instead of consuming it before the game writes it */
+    ports[port].last_l = ports[port].last_r = 0;
+    ports[port].started = 1;
+    ReleaseSRWLockExclusive(&lock);
+    return 0;
+}
 int audio_port_stop(uint32_t port) { if (port >= MAX_PORTS || !ports[port].open) return -1; ports[port].started = 0; return 0; }
 int audio_port_close(uint32_t port) {
     if (port >= MAX_PORTS) return -1;
