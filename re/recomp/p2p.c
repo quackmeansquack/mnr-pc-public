@@ -211,7 +211,7 @@ static void rpcn_ping(void) {   /* 13 bytes from the P2P port to RPCN's UDP port
 }
 
 /* ------------------------------------------------------------------ the port's thread */
-static void dispatch(const uint8_t *b, int n, const struct sockaddr_in *from) {
+static void p2p_dispatch(const uint8_t *b, int n, const struct sockaddr_in *from) {
     if (n < 2) return;
     uint16_t dst = rd16le(b);
     if (dst == 0) {
@@ -250,7 +250,7 @@ static DWORD WINAPI port_thread(void *arg) {
         if (select(0, &rd, NULL, NULL, &tv) > 0) {
             struct sockaddr_in from; int fl = sizeof from;
             int n = recvfrom(real, (char *)buf, sizeof buf, 0, (struct sockaddr *)&from, &fl);
-            if (n > 0) dispatch(buf, n, &from);
+            if (n > 0) p2p_dispatch(buf, n, &from);
         }
         uint64_t t = now_ms();
         if (!rpcn_user_id && t >= next_events) { rpcn_info(); next_events = t + 2000; }
