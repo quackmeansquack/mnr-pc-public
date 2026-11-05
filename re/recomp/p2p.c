@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "p2p.h"
+#include "net.h"
 
 int net_http_get(const char *hostport, const char *path, uint8_t **body);
 
@@ -204,7 +205,7 @@ static void rpcn_ping(void) {   /* 13 bytes from the P2P port to RPCN's UDP port
     if (!rpcn_user_id) return;
     uint8_t p[13]; p[0] = 1; wr64le(p + 1, (uint64_t)rpcn_user_id);
     uint32_t local = 0;
-    { extern const char *net_local_ip(void); struct in_addr a; if (inet_pton(AF_INET, net_local_ip(), &a) == 1) local = a.s_addr; }
+    { struct in_addr a; if (inet_pton(AF_INET, net_local_ip(), &a) == 1) local = a.s_addr; }
     memcpy(p + 9, &local, 4);
     send_to(p, sizeof p, rpcn_ip, 3657);
 }

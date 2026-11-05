@@ -104,7 +104,7 @@ def main():
     want = ('#define MNR_TRACE 1' + chr(10) if args.trace else '') + ('#define MNR_PGO_GEN 1' + chr(10) if args.pgo_gen else '') or '/* no options */' + chr(10)
     if not os.path.exists(opts) or open(opts).read() != want:
         open(opts, 'w').write(want)
-    for f in ('runtime.h', 'vmx.h', 'host.c', 'rsx.h', 'rsx.c', 'present.c', 'rsx_shader.h', 'rsx_shader.c', 'rsx_render.c', 'png.h', 'png.c', 'imgenc.h', 'imgenc.c', 'input.h', 'input.c', 'net.h', 'net.c', 'p2p.h', 'p2p.c', 'native.c', 'audio.h', 'audio.c', 'rsx_hlsl.h', 'rsx_hlsl.c', 'rsx_hlsltest.c', 'rsx_tex.h', 'rsx_d3d.h', 'rsx_d3d.c', 'spu.h', 'spu.c', 'spu_core.h', 'voice.h', 'voice.c', 'voice_celp.c', 'fwextract.c', 'fwkeys.h'):
+    for f in ('runtime.h', 'vmx.h', 'host.h', 'host.c', 'rsx.h', 'rsx.c', 'present.h', 'present.c', 'rsx_shader.h', 'rsx_shader.c', 'rsx_render.c', 'png.h', 'png.c', 'imgenc.h', 'imgenc.c', 'input.h', 'input.c', 'net.h', 'net.c', 'p2p.h', 'p2p.c', 'native.c', 'audio.h', 'audio.c', 'rsx_hlsl.h', 'rsx_hlsl.c', 'rsx_hlsltest.c', 'rsx_tex.h', 'rsx_d3d.h', 'rsx_d3d.c', 'spu.h', 'spu.c', 'spu_core.h', 'voice.h', 'voice.c', 'voice_celp.c', 'fwextract.h', 'fwextract.c', 'fwkeys.h'):
         shutil.copy2(os.path.join(HERE, f), OUT)
     sources = sorted(os.path.join(OUT, f) for f in os.listdir(OUT) if f.endswith('.c'))
     failed = []

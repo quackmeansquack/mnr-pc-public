@@ -10,12 +10,13 @@
 #include <math.h>
 #include <windows.h>
 #include "runtime.h"
+#include "host.h"
 #include "rsx.h"
 #include "rsx_shader.h"
 #include "rsx_d3d.h"
 
-extern uint32_t rsx_vp[512][4];
-extern uint32_t rsx_vpc[468][4];
+static int ww_nregions;                 /* the memory the per-frame scan covers (ww_scan_all_locked) */
+static uint32_t ww_regions[65][2];
 uint32_t rsx_fp_addr(void);
 void rsx_hlsl_test(const uint32_t (*vp)[4], uint32_t vp_start, const fp_insn_t *fp, int nfp, uint32_t ctl, const uint8_t dims[16]);
 #define REG(m) rsx_reg(0, (m))
@@ -951,7 +952,6 @@ static uint32_t *elems; static uint32_t nelems, cap_elems;
 static unsigned cur_prim;
 #include "rsx_d3d.h"
 int rsx_use_d3d = -1;   /* MNR_RSX=d3d */
-extern volatile int rsx_heavy_started;   /* rsx.c: MNR_RSX_DRAW_HEAVY gate */
 static int nodraw = -1;
 static long draw_from = -1;
 static int skip_draw(void) {   /* MNR_RSX_NODRAW=1: never draw; MNR_RSX_DRAW_FROM=<flip>: start drawing at that flip */
@@ -1278,9 +1278,7 @@ static void ww_scan_all_locked(void) {
      * committed memory). Asking about the whole 4 GB reservation every frame cost ~5 ms. */
     struct { uint32_t lo, hi; } regions[65];
     int nr = 0;
-    extern int ww_nregions; extern uint32_t ww_regions[65][2];
-    {   extern int gcm_io_regions(uint32_t *ea, uint32_t *size, int max);
-        uint32_t e[64], sz[64]; int n = getenv("MNR_WW_FULL") ? 0 : gcm_io_regions(e, sz, 64);
+    {   uint32_t e[64], sz[64]; int n = getenv("MNR_WW_FULL") ? 0 : gcm_io_regions(e, sz, 64);
         regions[nr].lo = 0xC0000000u; regions[nr++].hi = 0xD0000000u;   /* RSX local memory */
         if (n > 0) for (int i = 0; i < n; i++) { regions[nr].lo = e[i]; regions[nr++].hi = e[i] + sz[i]; }   /* main memory the RSX maps */
         else { regions[nr].lo = 0x00000000u; regions[nr++].hi = 0x20000000u; regions[nr].lo = 0x30000000u; regions[nr++].hi = 0x40000000u; }
@@ -1317,7 +1315,6 @@ static uint64_t range_gen_scanned(uint32_t addr, uint32_t size) {
  * cache is keyed on the scan, not the flip. */
 static long ww_epoch;
 static ULONGLONG ww_last_tick;
-int ww_nregions; uint32_t ww_regions[65][2];   /* the memory the per-frame scan covers (ww_scan_all_locked) */
 uint64_t rsx_range_gen(uint32_t addr, uint32_t size) {
     /* main memory (not RSX local): its pages are asked about directly. The per-frame scan missed writes there (the
      * loading screen's font texture at 0x37FBE880 kept old glyphs, thumbnails stayed stale) while a direct query of

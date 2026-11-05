@@ -22,6 +22,10 @@
 #include <dxgi.h>
 #include <d3dcompiler.h>
 #include "runtime.h"
+#include "host.h"
+#include "audio.h"
+#include "voice.h"
+#include "spu.h"
 #include "rsx.h"
 #include "rsx_shader.h"
 #include "rsx_hlsl.h"
@@ -31,8 +35,6 @@
 #define ENVFLAG(name) ({ static int v_ = -1; if (v_ < 0) v_ = getenv(name) != NULL; v_; })
 #define ENVSTR(name) ({ static const char *v_ = (const char *)-1; if (v_ == (const char *)-1) v_ = getenv(name); v_; })   /* (the same, for a value) */
 
-extern uint32_t rsx_vp[512][4];
-extern uint32_t rsx_vpc[468][4];
 uint32_t rsx_fp_addr(void);
 #define REG(m) rsx_reg(0, (m))
 static inline float u2f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
@@ -268,7 +270,6 @@ static int sh_ready(shader_t *s) {
     return 1;
 }
 
-extern uint32_t rsx_vp_gen_pub;
 static ID3D11VertexShader *get_vs(void) {
     static uint32_t last_gen = 0xFFFFFFFF, last_start; static ID3D11VertexShader *last_vs;
     uint32_t start = REG(0x1EA0) & 511, end = start;
@@ -551,7 +552,7 @@ static void surf_load_rows(surf_t *s, uint32_t y0, uint32_t y1) {
     surf_unprotect(s);
     uint32_t rows = y1 - y0, n = s->w * rows, f = s->rsx_fmt;
     rsx_d3d_ld_count[surf_load_why]++; rsx_d3d_ld_pixels += n;
-    if (ENVFLAG("MNR_D3D_WBLOG")) { extern volatile long rsx_flips; printf("[d3d] flip %ld load(%s) 0x%08x %ux%u fmt %u%s\n", rsx_flips, surf_load_why == 0 ? "new" : surf_load_why == 1 ? "cpu" : "range", s->addr, s->w, s->h, f, s->depth ? " depth" : ""); }
+    if (ENVFLAG("MNR_D3D_WBLOG")) { printf("[d3d] flip %ld load(%s) 0x%08x %ux%u fmt %u%s\n", rsx_flips, surf_load_why == 0 ? "new" : surf_load_why == 1 ? "cpu" : "range", s->addr, s->w, s->h, f, s->depth ? " depth" : ""); }
     uint32_t bpp = s->depth ? (f == 1 ? 2 : 4) : color_bytes(f);
     uint32_t *xo = malloc(4 * (s->w + s->h)), *yo = xo + s->w;
     pix_tables(s, bpp, xo, yo);
@@ -681,7 +682,7 @@ static LONG CALLBACK lazy_fault(EXCEPTION_POINTERS *e) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     {   static int lg = -1; static volatile long n; if (lg < 0) lg = getenv("MNR_LAZY_LOG") != NULL;   /* debug: who reads written-back surfaces */
-        if (lg && InterlockedIncrement(&n) <= 60) { extern volatile long rsx_flips;
+        if (lg && InterlockedIncrement(&n) <= 60) {
             printf("[lazy] flip %ld page 0x%08x read by thread %lu at rip %p%s\n", rsx_flips, page << 12, GetCurrentThreadId(), (void *)(e->ContextRecord->Rip - (DWORD64)GetModuleHandleA(NULL) + 0x140000000ull), GetCurrentThreadId() == rsx_tid ? " (RSX thread)" : ""); } }
     if (GetCurrentThreadId() == rsx_tid) lazy_service_page(page);   /* the RSX thread itself (our own code reading guest memory) */
     else lazy_request((long)page + 1);
@@ -757,7 +758,6 @@ static void surf_writeback_body(surf_t *s) {
     if (!s->swizzled && s->dirty_h && s->dirty_h < s->h && rows > s->dirty_h &&
         rsx_range_gen_now(s->addr + s->pitch * s->dirty_h, s->pitch * (s->h - s->dirty_h)) > s->guest_gen) rows = s->dirty_h;
     {   static int tl = -1; static int n; if (tl < 0) tl = getenv("MNR_THUMB_LOG") != NULL;   /* debug: GPU results written back to memory */
-        extern volatile long rsx_flips; extern int wb_why;
         if (tl && n++ < 3000) printf("[thumb] writeback 0x%08x %ux%u fmt %u pitch %u rows %u why %d flip %ld\n", s->addr, s->w, s->h, s->rsx_fmt, s->pitch, rows, wb_why, rsx_flips); }
     s->gpu_dirty = 0; s->dirty_h = 0;
     /* surfaces sharing a 4 KB page with this one (but not its bytes) would see our write as a CPU
@@ -1095,7 +1095,7 @@ static void texlog(const rsx_texinfo_t *ti, const char *what, uint64_t g, uint64
     if (seen[k].addr == ti->addr && seen[k].what == what && now - seen[k].t < 1000) return;
     seen[k].addr = ti->addr; seen[k].what = what; seen[k].t = now;
     if (InterlockedIncrement(&n) > 6000) return;
-    extern volatile long rsx_flips; const uint8_t *b = gp(ti->addr);
+    const uint8_t *b = gp(ti->addr);
     printf("[tex128] flip %ld %s 0x%08x fmt 0x%02x linear %u gen %llu cached %llu first %02x%02x%02x%02x%02x%02x%02x%02x\n", rsx_flips, what, ti->addr, ti->fmt, ti->linear,
            (unsigned long long)g, (unsigned long long)have, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
 }
@@ -1106,7 +1106,6 @@ static void texlog(const rsx_texinfo_t *ti, const char *what, uint64_t g, uint64
 /* A draw (or blit) into the surface: at its first one each frame, or the first since it was in step with memory, its
  * memory's generation is read exactly, so a later CPU write can be told from one made before the drawing. */
 static void surf_drawn(surf_t *s) {
-    extern volatile long rsx_flips;
     if (!s->gpu_dirty || s->drawn_flip != rsx_flips) { s->dirty_gen = rsx_range_gen_now(s->addr, surf_bytes(s)); s->drawn_flip = rsx_flips; }
     s->gpu_dirty = 1; s->drawn_at = ++draw_clock; s->drawn_scan = rsx_ww_scans();
 }
@@ -1131,7 +1130,7 @@ static ID3D11ShaderResourceView *tex_srv(int u, const rsx_texinfo_t *ti, uint32_
         const uint8_t *b = gp(ti->addr);
         if (tl && b[0] == 0xff && b[4] == 0xff && b[8] == 0xff && b[12] == 0xff) {
             static uint32_t said[256]; unsigned k = (ti->addr >> 12) & 255;
-            if (said[k] != ti->addr) { said[k] = ti->addr; extern volatile long rsx_flips;
+            if (said[k] != ti->addr) { said[k] = ti->addr;
                 printf("[thumb] DXT texture 0x%08x %ux%u fmt 0x%02x holds raw pixels (flip %ld)\n", ti->addr, ti->w, ti->h, ti->fmt, rsx_flips); }
         }
     }
@@ -1150,7 +1149,7 @@ static ID3D11ShaderResourceView *tex_srv(int u, const rsx_texinfo_t *ti, uint32_
         int bound = 0;
         for (int i = 0; i < 4; i++) if (s->rtv && bound_rtv[i] == s->rtv) bound = 1;
         int dbound = s->depth && s->dsv && bound_dsv == s->dsv;   /* (a depth buffer sampled while bound: left as is; copying it made shadows noisy) */
-        if (bound || dbound) { static int nl; extern volatile long rsx_flips;
+        if (bound || dbound) { static int nl;
             if (ENVSTR("MNR_D3D_FEEDBACK_LOG") && rsx_flips >= atol(ENVSTR("MNR_D3D_FEEDBACK_LOG")) && nl++ < 20000) printf("[d3d] flip %ld: draw samples its bound %s target 0x%08x %ux%u fmt %u\n", rsx_flips, s->depth ? "depth" : "colour", s->addr, s->w, s->h, s->rsx_fmt); }
         if (dbound) {   /* test: MNR_D3D_DEPTH_FB=<hex addr>,...: copy these depth buffers too when read while bound */
             const char *e = ENVSTR("MNR_D3D_DEPTH_FB"); char want[16]; if (e) snprintf(want, sizeof want, "%08x", s->addr);
@@ -1215,7 +1214,6 @@ static ID3D11ShaderResourceView *tex_srv(int u, const rsx_texinfo_t *ti, uint32_
      * not seen (garbage thumbnails, noise on loading screens). Small textures (up to 512x512) are sampled at every use
      * (512 bytes) and reloaded when the sample changed. MNR_TEX_CHECK=1: every texture (4096 samples), and reports. */
     static int check = -1; if (check < 0) check = getenv("MNR_TEX_CHECK") != NULL;
-    extern volatile long rsx_flips;
     /* (once a frame: the 512 scattered reads at every use were a third of the RSX thread's time in races) */
     /* (each texture every 4th frame, staggered by address: 512 scattered reads are 512 cache misses, and a frame
      * samples hundreds of textures; a write seen by write-watch still reloads at once, a missed one within 4 frames) */
@@ -1246,7 +1244,6 @@ static ID3D11ShaderResourceView *tex_srv(int u, const rsx_texinfo_t *ti, uint32_
             if (hit->hash && h != hit->hash && g <= hit->gen) {
                 if (check) {
                 static volatile long n; if (InterlockedIncrement(&n) <= 40) {
-                    extern int gcm_io_regions(uint32_t *ea, uint32_t *size, int max);
                     uint32_t e[64], sz[64]; int nr = gcm_io_regions(e, sz, 64), in = ti->addr >= 0xC0000000u && ti->addr < 0xD0000000u;
                     for (int i = 0; i < nr && !in; i++) in = ti->addr >= e[i] && ti->addr < e[i] + sz[i];
                     printf("[texstale] 0x%08x %ux%u fmt 0x%02x linear %u: bytes changed, no write seen (gen %llu, page gen %llu, in scanned memory: %s, %d io regions)\n",
@@ -1287,7 +1284,7 @@ static ID3D11ShaderResourceView *tex_srv(int u, const rsx_texinfo_t *ti, uint32_
         static int tl = -1; if (tl < 0) tl = getenv("MNR_TEX_LOG") != NULL;
         static volatile long n;
         if (tl && ti->w >= 64 && ti->w <= 256 && ti->h >= 64 && ti->h <= 256 && InterlockedIncrement(&n) <= 600) {
-            extern volatile long rsx_flips; const uint8_t *b = gp(ti->addr);
+            const uint8_t *b = gp(ti->addr);
             printf("[texup] flip %ld 0x%08x %ux%u fmt 0x%02x linear %u pitch %u levels %u gen %llu sample %016llx first %02x%02x%02x%02x%02x%02x%02x%02x\n",
                    rsx_flips, ti->addr, ti->w, ti->h, ti->fmt, ti->linear, ti->pitch, ti->levels, (unsigned long long)g,
                    (unsigned long long)sample, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
@@ -1629,7 +1626,7 @@ typedef struct { uint32_t afmt[16][4]; int32_t abase[16][4]; float aconst[16][4]
 typedef struct { uint32_t remap[16][4]; float alpha_ref[4]; uint32_t alpha_func[4]; float tex_size[16][4]; float wps[4]; } fpd_cb_t;
 
 static void save_surface_bmp(surf_t *s, const char *name);
-static int zq_running; extern long rsx_d3d_zq_draws;   /* (occlusion counting, below) */
+static int zq_running;   /* (occlusion counting, below) */
 /* MNR_D3D_DROPLOG=<from flip>: draws the backend drops before drawing, with the reason (debug) */
 static void droplog(const char *why, unsigned prim, uint32_t nelems, uint32_t extra) {
     static long from = -2; static int n; if (from == -2) { const char *e = getenv("MNR_D3D_DROPLOG"); from = e ? atol(e) : -1; }
@@ -1811,7 +1808,7 @@ int rsx_d3d_draw(unsigned prim, const uint32_t *elems, uint32_t nelems) {
                 if (o->gpu_dirty && o->addr < span[a].addr + span[a].size && span[a].addr < o->addr + surf_dirty_bytes(o)) { wb_why = 8; surf_writeback(o); wrote_back = 1; }
             }
     }
-    { extern long long rsx_d3d_vbytes, rsx_d3d_vbig; rsx_d3d_vbytes += total; for (int k = 0; k < ngrp; k++) if (grp[k].size >= 16384) rsx_d3d_vbig += grp[k].size; }
+    { rsx_d3d_vbytes += total; for (int k = 0; k < ngrp; k++) if (grp[k].size >= 16384) rsx_d3d_vbig += grp[k].size; }
     { static int n; if (ENVFLAG("MNR_D3D_VTXLOG") && n < 6) for (int a = 0; a < 16; a++)
         if (span[a].size && span[a].addr >= 0xc0000000u && span[a].addr < 0xc0100000u) { n++;
             printf("[d3d] attr %d from 0x%08x (%u bytes):", a, span[a].addr, span[a].size);
@@ -1828,7 +1825,6 @@ int rsx_d3d_draw(unsigned prim, const uint32_t *elems, uint32_t nelems) {
         static int on = -1; if (on < 0) on = getenv("MNR_VSTAT") != NULL;
         if (on) {
             static double all, loc, stable, stable_loc; static long f0 = -1, draws;
-            extern long rsx_ww_scans(void); extern uint64_t rsx_ww_gen_after(long k), rsx_range_gen(uint32_t a, uint32_t s);
             uint64_t old = rsx_ww_gen_after(rsx_ww_scans() - 4); draws++;
             for (int k = 0; k < ngrp; k++) { int l = grp[k].addr >= 0xC0000000u, st = old != UINT64_MAX && rsx_range_gen(grp[k].addr, grp[k].size) < old;
                 all += grp[k].size; if (l) loc += grp[k].size; if (st) stable += grp[k].size; if (st && l) stable_loc += grp[k].size; }
@@ -1846,7 +1842,6 @@ int rsx_d3d_draw(unsigned prim, const uint32_t *elems, uint32_t nelems) {
      * the ring (a staging copy first doubled the copying). MNR_NO_VCACHE=1: copy everything (A/B tests). */
     uint32_t gabs[16], gnew[16], newtotal = 0; uint64_t gg[16]; int need[16];
     {   static int off = -1; if (off < 0) off = getenv("MNR_NO_VCACHE") != NULL;
-        extern long rsx_ww_scans(void); extern uint64_t rsx_ww_gen_after(long k), rsx_range_gen(uint32_t a, uint32_t s);
         uint64_t old = off || wrote_back ? UINT64_MAX : rsx_ww_gen_after(rsx_ww_scans() - 3);
         for (int k = 0; k < ngrp; k++) {
             need[k] = 1; gg[k] = UINT64_MAX;
@@ -1889,7 +1884,6 @@ int rsx_d3d_draw(unsigned prim, const uint32_t *elems, uint32_t nelems) {
     }
     upload(cb_draw, &dc, sizeof dc);
     static uint32_t last_vpc_gen = 0xFFFFFFFF;
-    extern uint32_t rsx_vpc_gen;
     if (rsx_vpc_gen != last_vpc_gen) { upload(cb_vpc, rsx_vpc, sizeof(uint32_t) * 468 * 4); last_vpc_gen = rsx_vpc_gen; }
 
     /* fragment constants and textures */
@@ -2543,7 +2537,6 @@ static void dump_surfaces(void) {
  * the game in fullscreen). */
 static ID3D11Texture2D *osk_tex; static ID3D11ShaderResourceView *osk_srv; static UINT osk_tw, osk_th;
 static void draw_osk(D3D11_VIEWPORT pic) {
-    extern int osk_overlay(WCHAR *title, size_t tcap, WCHAR *text, size_t xcap);
     WCHAR title[256], text[512];
     if (!osk_overlay(title, 256, text, 512)) return;
     UINT w = (UINT)(pic.Width * 0.62f), h = (UINT)(pic.Height * 0.17f);
@@ -2609,22 +2602,17 @@ static void draw_osk(D3D11_VIEWPORT pic) {
  * Drawn with GDI into a texture, like the text entry above. */
 static ID3D11Texture2D *hud_tex; static ID3D11ShaderResourceView *hud_srv; static UINT hud_tw, hud_th;
 static void draw_hud(D3D11_VIEWPORT pic) {
-    extern volatile long voice_talking, voice_mic_state, voice_active, voice_send_state;
-    extern int voice_ptt_key(void), voice_ptt_mode(void), audio_volume_pct(void), mnr_key_down(int vk);
-    extern volatile unsigned long audio_volume_changed;
     DWORD now = GetTickCount(), vc = audio_volume_changed;
     int show_vol = vc && now - vc < 1500;
-    extern volatile DWORD voice_mic_changed; extern volatile float voice_mic_level; extern const char *voice_mic_name(void);
     DWORD mc = voice_mic_changed; int show_mic = mc && now - mc < 2500;
     int held = voice_ptt_mode() ? mnr_key_down(voice_ptt_key()) : (int)voice_talking;
-    extern int np_notices(wchar_t out[][96], int max);   /* friend notices (host.c): requests, new friends, online, invites */
     WCHAR notes[3][96]; int nnotes = np_notices(notes, 3);
     if (!show_vol && !held && !show_mic && !nnotes) return;
     WCHAR talk[64] = L""; COLORREF dot = RGB(230, 50, 50);
     if (held) {
         if (!voice_active) { wcscpy(talk, L"Voice chat not running"); dot = RGB(120, 120, 130); }
         else if (voice_mic_state < 0) { wcscpy(talk, L"No microphone found"); dot = RGB(230, 160, 40); }
-        else if (voice_send_state < 0) { extern volatile long voice_codec_missing;
+        else if (voice_send_state < 0) {
             wcscpy(talk, voice_codec_missing ? L"Needs PS3UPDAT.PUP in MNR folder" : L"Talking (voice can't be sent)"); dot = RGB(230, 160, 40); }
         else wcscpy(talk, L"Talking");
     }
@@ -2777,7 +2765,7 @@ void rsx_d3d_present(uint32_t buffer) {
     if (s) { srv = s->srv; sc[0] = (float)d.width * s->aa_x / s->w; sc[1] = (float)d.height * s->aa_y / s->h; sc[2] = 1.0f / s->pw; sc[3] = 1.0f / s->ph; }
     if (s) {   /* a GPU surface: shown as is (below); only a display buffer the CPU wrote gets uploaded */
       if (s->dxfmt == DXGI_FORMAT_R8G8B8A8_UNORM && ENVSTR("MNR_D3D_DARKDUMP")) {   /* debug: a frame much darker than the last one dumps every surface (and the next frame's) */
-        static ID3D11Texture2D *row; extern void spu_occ_dump(long); static float prev = 255; static int events, dump_next;
+        static ID3D11Texture2D *row; static float prev = 255; static int events, dump_next;
         if (!row) { D3D11_TEXTURE2D_DESC td = {s->w, 1, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0}; ID3D11Device_CreateTexture2D(dev, &td, NULL, &row); }
         D3D11_BOX b = {0, s->h * 2 / 3, 0, s->w, s->h * 2 / 3 + 1, 1};
         if (row) {

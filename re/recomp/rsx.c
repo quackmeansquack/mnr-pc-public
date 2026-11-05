@@ -10,9 +10,11 @@
 #include <stdlib.h>
 #include <windows.h>
 #include "runtime.h"
+#include "host.h"
 #include "rsx.h"
 #include "rsx_shader.h"
 #include "rsx_d3d.h"
+#include "spu.h"
 /* a debug switch read once (getenv is far too slow for per-draw checks) */
 #define ENVFLAG(name) ({ static int v_ = -1; if (v_ < 0) v_ = getenv(name) != NULL; v_; })
 uint32_t rsx_vpc_gen;
@@ -49,44 +51,42 @@ static void frame_log(uint32_t buffer) {
     static LARGE_INTEGER last; LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
     if (rsx_flips % 60 != 1 && !(last.QuadPart && now.QuadPart - last.QuadPart > 5 * f.QuadPart)) return;   /* every 60 frames, or 5 s when slow */
     long frames = rsx_flips - (long)fs.last_log_flip; fs.last_log_flip = (uint32_t)rsx_flips;
-    extern double rsx_draw_seconds;
     double dt = last.QuadPart ? (double)(now.QuadPart - last.QuadPart) / f.QuadPart : 0;
-    extern uint64_t rsx_d3d_wb_count, rsx_d3d_wb_pixels;
     if (dt > 0) printf("[rsx] %.2f fps over the last %ld frames, %.0f%% of the time in draws, %llu writebacks (%llu kpx)\n", frames / dt, frames, 100 * rsx_draw_seconds / dt,
                        (unsigned long long)rsx_d3d_wb_count, (unsigned long long)rsx_d3d_wb_pixels / 1000);
     rsx_d3d_wb_count = rsx_d3d_wb_pixels = 0;
-    { extern uint64_t rsx_d3d_wb_why[10], rsx_d3d_wb_why_px[10]; extern double rsx_d3d_wb_s;
+    {
       static const char *why[10] = {"other", "unprotect", "lazy fault", "re-created", "evicted", "frame sync", "range flush", "as texture", "as vertices", "screenshot"};
-      { extern uint32_t rsx_d3d_last_flush[5]; if (rsx_d3d_wb_why[6]) printf("[rsx]   last range flush: surface 0x%08x %ux%u fmt %u (from %u)\n", rsx_d3d_last_flush[0], rsx_d3d_last_flush[1], rsx_d3d_last_flush[2], rsx_d3d_last_flush[3], rsx_d3d_last_flush[4]); }
+      { if (rsx_d3d_wb_why[6]) printf("[rsx]   last range flush: surface 0x%08x %ux%u fmt %u (from %u)\n", rsx_d3d_last_flush[0], rsx_d3d_last_flush[1], rsx_d3d_last_flush[2], rsx_d3d_last_flush[3], rsx_d3d_last_flush[4]); }
       if (rsx_d3d_wb_s > 0) { printf("[rsx]   writebacks took %.2f s:", rsx_d3d_wb_s);
           for (int k = 0; k < 10; k++) if (rsx_d3d_wb_why[k]) printf(" %s %llu (%llu kpx)", why[k], (unsigned long long)rsx_d3d_wb_why[k], (unsigned long long)rsx_d3d_wb_why_px[k] / 1000);
           printf("\n"); }
       memset(rsx_d3d_wb_why, 0, sizeof rsx_d3d_wb_why); memset(rsx_d3d_wb_why_px, 0, sizeof rsx_d3d_wb_why_px); rsx_d3d_wb_s = 0; }
-    { extern uint64_t rsx_d3d_ld_count[3], rsx_d3d_ld_pixels;
+    {
       printf("[rsx]   surface loads: %llu new, %llu CPU-modified, %llu copy targets (%llu kpx)\n", (unsigned long long)rsx_d3d_ld_count[0],
              (unsigned long long)rsx_d3d_ld_count[1], (unsigned long long)rsx_d3d_ld_count[2], (unsigned long long)rsx_d3d_ld_pixels / 1000);
       memset(rsx_d3d_ld_count, 0, sizeof rsx_d3d_ld_count); rsx_d3d_ld_pixels = 0; }
-    { extern double rsx_d3d_gpu_ms; extern long rsx_d3d_gpu_frames;
+    {
       if (rsx_d3d_gpu_frames) printf("[rsx]   GPU: %.1f ms per frame (flip to flip, %ld frames measured)\n", rsx_d3d_gpu_ms / rsx_d3d_gpu_frames, rsx_d3d_gpu_frames);
       rsx_d3d_gpu_ms = 0; rsx_d3d_gpu_frames = 0; }
-    { extern long rsx_rg_now_calls; extern double rsx_rg_now_s, rsx_ww_scan_s;
+    {
       printf("[rsx]   page tracking: %ld direct range checks (%.2f s), frame scans %.2f s\n", rsx_rg_now_calls, rsx_rg_now_s, rsx_ww_scan_s);
-      { extern void *rsx_rg_callers[16]; extern long rsx_rg_caller_n[16];
+      {
         for (int i = 0; i < 16 && rsx_rg_callers[i]; i++) if (rsx_rg_caller_n[i] > 100) printf("[rsx]     from 0x%llx: %ld\n", (unsigned long long)((char *)rsx_rg_callers[i] - (char *)GetModuleHandleA(NULL)) + 0x140000000ull, rsx_rg_caller_n[i]);
         memset(rsx_rg_caller_n, 0, sizeof rsx_rg_caller_n); }
       rsx_rg_now_calls = 0; rsx_rg_now_s = 0; rsx_ww_scan_s = 0; }
-    { extern double rsx_d3d_compile_s, rsx_d3d_upload_s; extern long rsx_d3d_compiles, rsx_d3d_uploads, rsx_d3d_skip_vs, rsx_d3d_skip_ps;
+    {
       if (rsx_d3d_skip_vs || rsx_d3d_skip_ps) printf("[rsx]   d3d: skipped draws: %ld (vertex program), %ld (fragment program)\n", rsx_d3d_skip_vs, rsx_d3d_skip_ps);
       rsx_d3d_skip_vs = rsx_d3d_skip_ps = 0;
       if (rsx_d3d_compiles || rsx_d3d_uploads)
           printf("[rsx]   d3d: %ld shader compiles (%.1f s), %ld texture uploads (%.1f s)\n", rsx_d3d_compiles, rsx_d3d_compile_s, rsx_d3d_uploads, rsx_d3d_upload_s);
       rsx_d3d_compiles = rsx_d3d_uploads = 0; rsx_d3d_compile_s = rsx_d3d_upload_s = 0; }
-    {   extern uint32_t rsx_sc_hist[8][0x800];
+    {
         for (int sc = 1; sc < 8; sc++) for (int m = 0; m < 0x800; m++)
             if (rsx_sc_hist[sc][m]) { printf("[rsx]   subchannel %d method 0x%04x x%u (last arg 0x%08x)\n", sc, m * 4, rsx_sc_hist[sc][m], reg[sc][m]); rsx_sc_hist[sc][m] = 0; }
     }
-    { extern long long rsx_d3d_vbytes, rsx_d3d_vbig; if (rsx_d3d_vbytes) printf("[rsx]   vertex data: %.1f MB staged, %.1f MB of it in spans of 16 KB+\n", rsx_d3d_vbytes / 1048576.0, rsx_d3d_vbig / 1048576.0); rsx_d3d_vbytes = rsx_d3d_vbig = 0; }
-    { extern double spu_seconds; extern uint64_t spu_steps;
+    { if (rsx_d3d_vbytes) printf("[rsx]   vertex data: %.1f MB staged, %.1f MB of it in spans of 16 KB+\n", rsx_d3d_vbytes / 1048576.0, rsx_d3d_vbig / 1048576.0); rsx_d3d_vbytes = rsx_d3d_vbig = 0; }
+    {
       if (spu_steps) printf("[rsx]   spu: %.0f%% of the time, %.1fM instructions\n", 100 * spu_seconds / dt, spu_steps / 1e6);
       spu_seconds = 0; spu_steps = 0; }
     rsx_draw_seconds = 0; last = now;
@@ -138,7 +138,7 @@ static void nv3089_blit(void) {
         if (tl && dst >= 0xC0000000u && n++ < 3000) printf("[thumb] blit 0x%08x %ux%u fmt %u -> 0x%08x pitch %u fmt %u %dx%d flip %ld\n", src, sw, sh, sfmt, dst, dpitch, dfmt, ow, oh, rsx_flips); }
     fs.blits++;
     if (rsx_use_d3d == 1 && rsx_d3d_blit(src, spitch, sfmt, sw, sh, u0, v0, dsdx, dtdy, dst, dpitch, dfmt, ox, oy, ow, oh, cx, cy, cw, chh, interp)) return;
-    if (rsx_use_d3d == 1) { extern uint32_t rsx_d3d_flush_from; rsx_d3d_flush_from = 3; rsx_d3d_flush_range(src, spitch * sh); rsx_d3d_flush_from = 0; }
+    if (rsx_use_d3d == 1) { rsx_d3d_flush_from = 3; rsx_d3d_flush_range(src, spitch * sh); rsx_d3d_flush_from = 0; }
     int s32 = sfmt != 7, d32 = dfmt != 4;
     for (int y = oy; y < oy + oh; y++) {
         if (y < cy || y >= cy + chh) continue;
@@ -178,7 +178,7 @@ static void nv0039_copy(int sc) {
         if (on && n++ < 40) printf("[copy] 0x%08x -> 0x%08x %u x %u lines (pitch %d -> %d)\n", in, out, len, lines, pin, pout); }
     /* a GPU surface over the destination must not later write its stale contents over the copy:
      * bring its memory up to date first (for partial copies), then reload it from the result */
-    if (rsx_use_d3d == 1) { extern uint32_t rsx_d3d_flush_from; rsx_d3d_flush_from = 1; rsx_d3d_flush_range(in, (uint32_t)(pin < 0 ? -pin : pin) * lines + len); rsx_d3d_flush_from = 2; rsx_d3d_flush_range(out, out_bytes); rsx_d3d_flush_from = 0; }
+    if (rsx_use_d3d == 1) { rsx_d3d_flush_from = 1; rsx_d3d_flush_range(in, (uint32_t)(pin < 0 ? -pin : pin) * lines + len); rsx_d3d_flush_from = 2; rsx_d3d_flush_range(out, out_bytes); rsx_d3d_flush_from = 0; }
     for (uint32_t y = 0; y < lines; y++)
         memmove(gp(out + (uint32_t)(pout * (int32_t)y)), gp(in + (uint32_t)(pin * (int32_t)y)), len);
     if (rsx_use_d3d == 1) rsx_d3d_reload_range(out, out_bytes);
@@ -290,7 +290,6 @@ __attribute__((noinline)) static void method_debug(unsigned sc, uint32_t m, uint
                 ULONGLONG t = GetTickCount64();
                 if (!t0) t0 = t;
                 else if (t - t0 >= 5000) {
-                    extern long rsx_d3d_uploads; extern double rsx_d3d_upload_s, rsx_d3d_wb_s; extern uint64_t rsx_d3d_wb_count, rsx_d3d_wb_why[10];
                     static long up0; static double ups0, wbs0; static uint64_t wb0, why0[10];
                     printf("[rsxtick] %.1f s: %llu methods, %llu draws, %llu blits, %llu copies | %ld uploads (%.2f s) | %llu writebacks (%.2f s) by cause:",
                            (t - t0) / 1000.0, methods, draws, blits, copies, rsx_d3d_uploads - up0, rsx_d3d_upload_s - ups0,
@@ -315,14 +314,14 @@ __attribute__((noinline)) static void method_report(uint32_t arg) {   /* GET_REP
           uint32_t v = type == 1 ? (rsx_use_d3d == 1 && !fixed ? rsx_d3d_zpass_read_at(a + 8) : 0x10000u) : 0;
           st_u32(a + 8, v);
           { static long from = -2; if (from == -2) { const char *e = getenv("MNR_RSX_REPORTVAL"); from = e ? atol(e) : -1; }
-            if (from >= 0 && rsx_flips >= from) { extern long rsx_d3d_zq_draws, rsx_d3d_zq_enables, rsx_d3d_zq_clears;
+            if (from >= 0 && rsx_flips >= from) {
               printf("[report] flip %ld offset 0x%x value %u (enables %ld clears %ld counted draws %ld)\n", rsx_flips, arg & 0xFFFFFF, v, rsx_d3d_zq_enables, rsx_d3d_zq_clears, rsx_d3d_zq_draws); } } }
         st_u32(a + 12, 0);
 }
 __attribute__((noinline)) static void method_subchannel(unsigned sc, uint32_t m, uint32_t arg) {
         /* MNR_RSX_SCLOG=1: histogram of methods on the 2D subchannels, printed with the frame log */
         static int on = -1; if (on < 0) { const char *e = getenv("MNR_RSX_SCLOG"); on = e && *e == '1'; }
-        if (on) { extern uint32_t rsx_sc_hist[8][0x800]; rsx_sc_hist[sc & 7][(m >> 2) & 0x7FF]++; }
+        if (on) { rsx_sc_hist[sc & 7][(m >> 2) & 0x7FF]++; }
         /* other subchannels: NV0039 copies are triggered by writing the line count + format */
         if (sc == 6 && m == 0x40C) nv3089_blit();   /* NV3089_IMAGE_IN: scaled image trigger */
         else if (m == 0x328 && sc != 3 && sc != 6) nv0039_copy((int)sc);   /* NV0039_BUFFER_NOTIFY */
@@ -403,25 +402,23 @@ static void wait_vblank(void) {
     static LONGLONG cap = -1; if (cap < 0) { const char *e = getenv("MNR_FPS_CAP"); cap = e && atoi(e) > 0 ? atoi(e) : 60; }
     /* everything flips at most at 30 Hz like the console (loading screens included), except Bink movies: our
      * player needs more presents per movie frame than the console's SPU decoder (see host.c, label wait) */
-    extern volatile long fs_movies_open; extern volatile LONGLONG fs_movie_read_qpc;
     int movie = fs_movies_open > 0 && now.QuadPart - fs_movie_read_qpc < 2 * freq.QuadPart;
     LONGLONG period = freq.QuadPart / (getenv("MNR_FPS_CAP") || movie ? cap : 30);
     /* in gameplay the game's own frame lock (host.c, the label 68 tick on the same grid) already held this frame back:
      * waiting again here on a second clock pushed frames that made the first deadline past the next one */
-    { extern volatile int gcm_frame_ticked; if (gcm_frame_ticked && !movie) { gcm_frame_ticked = 0; next.QuadPart = now.QuadPart + period; return; } }
+    { if (gcm_frame_ticked && !movie) { gcm_frame_ticked = 0; next.QuadPart = now.QuadPart + period; return; } }
     if (!next.QuadPart || now.QuadPart >= next.QuadPart) { next.QuadPart = now.QuadPart + period; return; }   /* slow frame: flip now */
     for (;;) {
         QueryPerformanceCounter(&now);
         LONGLONG left = next.QuadPart - now.QuadPart;
         if (left <= 0) break;
         DWORD ms = (DWORD)(left * 1000 / freq.QuadPart);
-        { extern volatile long rsx_lazy_req; extern void rsx_d3d_lazy_service(void); if (rsx_lazy_req) rsx_d3d_lazy_service(); }
+        { if (rsx_lazy_req) rsx_d3d_lazy_service(); }
         if (ms > 1) Sleep(1); else SwitchToThread();   /* (1 ms steps: lazy write-back requests are served while waiting) */
     }
     next.QuadPart += period;
 }
 
-extern volatile const char *rsx_cp_state;
 /* MNR_CAMLOG=1 (debug): per flip, the largest translation magnitude of a perspective transform (c267 of
  * indexed draws with c267.w > 0.5, the MVP's last row) and the time since the previous flip: shows the
  * camera running away */
@@ -479,8 +476,8 @@ void rsx_flip(uint32_t buffer) {
     if (dump_heavy_at < 0) { const char *e = getenv("MNR_RSX_DUMP_HEAVY"); dump_heavy_at = e ? 0 : -2; }
     if (dump_heavy_at == 0 && fs.draws >= 4500) { dump_heavy_at = rsx_flips + atol(getenv("MNR_RSX_DUMP_HEAVY")); printf("[rsx] heavy frame at flip %ld: dumping flip %ld\n", rsx_flips, dump_heavy_at); }
     InterlockedIncrement(&rsx_flips);
-    { extern void rsx_ww_kick(long); rsx_ww_kick(rsx_flips); }   /* this frame's write-watch scan, on its own thread */
-    { extern void gcm_flip_presented(void); gcm_flip_presented(); }   /* the game's flip handler runs on its own thread */
+    { rsx_ww_kick(rsx_flips); }   /* this frame's write-watch scan, on its own thread */
+    { gcm_flip_presented(); }   /* the game's flip handler runs on its own thread */
     if (rsx_heavy_started < 0) { const char *e = getenv("MNR_RSX_DRAW_HEAVY"); rsx_heavy_started = e ? 0 : 1; }
     if (!rsx_heavy_started) {
         const char *e = getenv("MNR_RSX_DRAW_HEAVY");

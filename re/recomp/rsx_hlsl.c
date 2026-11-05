@@ -16,6 +16,7 @@
 #include "runtime.h"
 #include "rsx_shader.h"
 #include "rsx_hlsl.h"
+#include "rsx_d3d.h"
 
 typedef struct { char *p; size_t cap, len; int overflow; } sb_t;
 static void emit(sb_t *b, const char *fmt, ...) {
@@ -427,7 +428,6 @@ int hlsl_fp(const fp_insn_t *prog, int n, uint32_t ctl, const uint8_t tex_dims[1
     if (b.overflow) return -2;
     {   /* a scene drawn larger than the game's size (MNR_RESOLUTION): programs that read the screen position get it in the
          * game's pixels (wps, in FPD after tex_size). Only those change, so the others keep their cached compiles. */
-        extern int rsx_d3d_res_scaled(void);
         if (rsx_d3d_res_scaled() && strstr(out + wpos_def + 40, "wpos")) {
             static const char *at[2] = {"float4 tex_size[16];", "float4(IN.pos.xy"}, *ins[2] = {" float4 wps;", " * wps.xy"};
             for (int k = 1; k >= 0; k--) {   /* (the later one first: the earlier insert moves it) */

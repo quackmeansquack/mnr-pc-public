@@ -23,6 +23,8 @@
 #include <windows.h>
 #include "spu_core.h"
 #include "voice.h"
+#include "host.h"
+#include "fwextract.h"
 
 uint32_t (*voice_guest_alloc)(uint32_t size, uint32_t align);   /* set by host.c */
 volatile long voice_codec_missing;   /* no firmware library found (overlay tells the player what to do) */
@@ -90,26 +92,37 @@ static int find_queue_calls(const spu_t *s, uint32_t end, fw_t *f) {
     f->pop = found[1][0]; f->popend = found[1][1]; f->push = found[2][0]; f->pushend = found[2][1];
     return f->pop && f->popend && f->push && f->pushend;
 }
+static const struct { const char *fmt; int home; } pup_sources[] = {
+    { "%s\\extracted\\PS3_UPDATE\\PS3UPDAT.PUP", 0 },
+    { "%s\\PS3UPDAT.PUP", 0 },
+    { "%s\\firmware\\PS3UPDAT.PUP", 0 },
+    { "%s\\Downloads\\PS3UPDAT.PUP", 1 },
+};
+static FILE *open_firmware_from_pup(const char *path, const char *dir) {
+    const char *home = getenv("USERPROFILE");
+    char pup[MAX_PATH];
+    for (size_t i = 0; i < sizeof pup_sources / sizeof pup_sources[0]; i++) {
+        const char *base = pup_sources[i].home ? home : mnr_root_dir();
+        if (!base) continue;
+        snprintf(pup, sizeof pup, pup_sources[i].fmt, base);
+        if (GetFileAttributesA(pup) == INVALID_FILE_ATTRIBUTES) continue;
+        fw_extract_voice(pup, dir);
+        FILE *fp = fopen(path, "rb");
+        if (fp) return fp;
+    }
+    return NULL;
+}
 static int fw_load(fw_t *f) {
     AcquireSRWLockExclusive(&fw_lock);
     if (!f->tried) {
         f->tried = 1;
-        char path[MAX_PATH]; extern const char *mnr_root_dir(void);
+        char path[MAX_PATH];
         snprintf(path, sizeof path, "%s\\firmware\\%s", mnr_root_dir(), f->file);
         FILE *fp = fopen(path, "rb");
         if (!fp) {   /* first use: from a PS3 system update: the disc's, or one the player downloaded (playstation.com) */
-            extern int fw_extract_voice(const char *pup_path, const char *out_dir);
-            char pup[MAX_PATH], dir[MAX_PATH]; const char *home = getenv("USERPROFILE");
+            char dir[MAX_PATH];
             snprintf(dir, sizeof dir, "%s\\firmware", mnr_root_dir());
-            for (int i = 0; i < 4 && !fp; i++) {
-                if (i == 0) snprintf(pup, sizeof pup, "%s\\extracted\\PS3_UPDATE\\PS3UPDAT.PUP", mnr_root_dir());
-                else if (i == 1) snprintf(pup, sizeof pup, "%s\\PS3UPDAT.PUP", mnr_root_dir());
-                else if (i == 2) snprintf(pup, sizeof pup, "%s\\firmware\\PS3UPDAT.PUP", mnr_root_dir());
-                else if (home) snprintf(pup, sizeof pup, "%s\\Downloads\\PS3UPDAT.PUP", home); else break;
-                if (GetFileAttributesA(pup) == INVALID_FILE_ATTRIBUTES) continue;
-                fw_extract_voice(pup, dir);
-                fp = fopen(path, "rb");
-            }
+            fp = open_firmware_from_pup(path, dir);
         }
         uint8_t *d = NULL; long n = 0;
         if (fp) { fseek(fp, 0, SEEK_END); n = ftell(fp); fseek(fp, 0, SEEK_SET); d = malloc(n); if (fread(d, 1, n, fp) != (size_t)n) n = 0; fclose(fp); }

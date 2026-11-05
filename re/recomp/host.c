@@ -13,8 +13,11 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include "runtime.h"
+#include "host.h"
+#include "present.h"
 #include "net.h"
 #include "rsx.h"
+#include "rsx_d3d.h"
 #include "spu.h"
 
 uint8_t *guest_mem;
@@ -22,8 +25,6 @@ __thread uint64_t trace_ring[32];
 __thread unsigned trace_pos;
 static __thread ctx_t *crash_ctx;   /* per host thread, for crash reports */
 static SRWLOCK alloc_lock = SRWLOCK_INIT;   /* guards the guest bump allocators and the jmp_buf table */
-extern const fn_entry_t fn_table[];
-extern const unsigned fn_table_count;
 static uint32_t tls_va, tls_filesz, tls_memsz;   /* PT_TLS template */
 static char mnr_root[MAX_PATH];                   /* the MNR folder (set in main) */
 const char *mnr_root_dir(void) { return mnr_root[0] ? mnr_root : "."; }
@@ -348,7 +349,6 @@ static void thread_register(ctx_t *c, const char *name) {
 static struct { uint64_t rip; uint32_t n; } prof[PROF_SLOTS], cprof[PROF_SLOTS];
 static struct { HMODULE mod; uint32_t n; uint64_t thread_mask; } modprof[64];
 static ctx_t cp_ctx_prof;   /* the RSX command processor's registration (gcm_thread) */
-extern volatile const char *rsx_cp_state;
 static uint32_t thr_in[128], thr_out[128];   /* per guest thread: samples in mnr.exe / elsewhere */
 static struct { long t; const char *hle; uint32_t lr, n; } waitprof[1024];   /* out-of-exe samples by (thread, HLE call, caller) */
 static DWORD WINAPI profiler_thread(void *p) {
@@ -468,7 +468,6 @@ void tl_rec(const char *what, LONGLONG t0, LONGLONG t1, uint32_t lr, uint32_t ar
 }
 void tl_mark(const char *what, uint32_t arg) { LARGE_INTEGER t; QueryPerformanceCounter(&t); LONGLONG s = tl_us50; tl_us50 = 0; tl_rec(what, t.QuadPart, t.QuadPart, 0, arg); tl_us50 = s; }
 static DWORD WINAPI tl_thread(void *p) {
-    extern volatile int race_began;
     while (!race_began) Sleep(100);
     Sleep((DWORD)(uintptr_t)p * 1000);
     LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); tl_us50 = f.QuadPart / 20000;
@@ -506,7 +505,7 @@ static DWORD WINAPI dump_to_file(void *p) {
     FILE *f = fopen(path, "w");
     if (f) {
         mnr_dump_threads(f);
-        {   extern void log_state(FILE *f); log_state(f); }
+        log_state(f);
         /* the host call stack of every guest thread (where a thread blocked inside Windows: module+offset; for
          * mnr.exe, llvm-addr2line -f -e mnr.exe <0x140000000 + offset>) */
         fprintf(f, "\n===== native stacks =====\n");
@@ -535,7 +534,6 @@ static DWORD WINAPI dump_to_file(void *p) {
     return 0;
 }
 void mnr_request_dump(void) { CreateThread(NULL, 0, dump_to_file, NULL, 0, NULL); }
-extern HWND rsx_window;   /* present.c */
 static DWORD WINAPI f9_thread(void *p) {   /* F9 with the console in front (another process's window, so polled) */
     (void)p; HWND con = GetConsoleWindow(); int was = 0;
     for (;;) {
@@ -741,7 +739,7 @@ static volatile LONGLONG gcm_wrap_qpc; static volatile long gcm_wraps;   /* time
 #define GCM_SEG 0x40000u
 static void gcm_callback(ctx_t *c) {   /* context full: (context*, count) -> jump back to the start, like libgcm */
     uint32_t ctx = ARG32(0), begin = ld_u32(ctx), cur = ld_u32(ctx + 8);
-    { extern volatile long rsx_flips; static int n; static int on = -1; if (on < 0) on = getenv("MNR_GCM_CALLLOG") != NULL; if (on && n++ < 400) printf("[gcmwrap] flip %ld ctx 0x%x begin 0x%x end 0x%x cur 0x%x need %u\n", (long)rsx_flips, ctx, begin, ld_u32(ctx + 4), cur, ARG32(1)); }
+    { static int n; static int on = -1; if (on < 0) on = getenv("MNR_GCM_CALLLOG") != NULL; if (on && n++ < 400) printf("[gcmwrap] flip %ld ctx 0x%x begin 0x%x end 0x%x cur 0x%x need %u\n", (long)rsx_flips, ctx, begin, ld_u32(ctx + 4), cur, ARG32(1)); }
     uint32_t begin_io = gcm_ea_to_io(begin), cur_io = gcm_ea_to_io(cur);
     LARGE_INTEGER w0; QueryPerformanceCounter(&w0);
     /* The main context's ring (2 MB) is used in 256 KB segments, as RPCS3 does: at each segment's end the commands
@@ -822,7 +820,6 @@ static void gcm_method(uint32_t m, uint32_t arg, uint32_t *sem_off) {
         /* The game's flips wait on label 68 = 0x1337, which its vblank handler writes on every second vblank:
          * that is the console's 30 fps lock for gameplay (videos and loading flip without it). Bounded so a
          * label nobody writes can't hang the command processor. */
-        extern volatile long rsx_lazy_req; extern void rsx_d3d_lazy_service(void); extern volatile const char *rsx_cp_state;
         LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
         static int handlers = -1; if (handlers < 0) handlers = getenv("MNR_VBLANK_HANDLER") != NULL;
         if (!handlers && ld_u32(GCM_LABELS + *sem_off) != arg) {
@@ -865,7 +862,6 @@ static void gcm_method(uint32_t m, uint32_t arg, uint32_t *sem_off) {
 
 /* MNR_GCM_CALLLOG=<from flip>: per flip, each command-buffer CALL with the draws (BEGIN_END) inside it, for 300 flips (debug) */
 static long cl_from = -2, cl_flip = -1; static uint32_t cl_target[8]; static unsigned cl_draws[8], cl_top_draws;
-extern volatile long rsx_flips;
 static int cl_on(void) { if (cl_from == -2) { const char *e = getenv("MNR_GCM_CALLLOG"); cl_from = e ? atol(e) : -1; } return cl_from >= 0 && rsx_flips >= cl_from && rsx_flips < cl_from + 300; }
 static unsigned cl_bytes;
 static void cl_newflip(void) { if (cl_flip != rsx_flips) { if (cl_flip >= 0) printf("[gcmcall] flip %ld end: %u draws outside calls, %u command bytes\n", cl_flip, cl_top_draws, cl_bytes); cl_flip = rsx_flips; cl_top_draws = 0; cl_bytes = 0; } }
@@ -881,7 +877,6 @@ static void gcm_cp_report(void) {
 static DWORD WINAPI gcm_thread(void *p) {
     thread_register(&cp_ctx_prof, "RSX command processor");   /* for the profiler and dumps */
     uint32_t sem_off = 0, call_stack[8], sp = 0;
-    extern volatile long rsx_lazy_req; extern void rsx_d3d_lazy_service(void);
     /* get is kept here and published to the control block only when the processor catches up with put, before a
      * semaphore wait, and every 64 packets: storing it after every packet shared a cache line with the game's put
      * writes (the two threads kept taking the line from each other) */
@@ -892,7 +887,7 @@ static DWORD WINAPI gcm_thread(void *p) {
         uint32_t put = ld_u32(GCM_CONTROL);
         if (get != pub && (get == put || !(++packets & 63))) st_u32(GCM_CONTROL + 4, pub = get);
         {   /* new commands published: SPU jobs launched before them (their output is vertex data) must be done */
-            extern volatile long spu_async_launched, spu_async_done; static uint32_t last_put = 0xFFFFFFFF; static long need; static int spins;
+            static uint32_t last_put = 0xFFFFFFFF; static long need; static int spins;
             if (put != last_put) { last_put = put; need = spu_async_launched; }
             if (spu_async_done < need) {   /* spin a little, then sleep until a worker finishes one (at most 1 ms: lazy requests) */
                 rsx_cp_state = "waiting for SPU jobs";
@@ -1048,8 +1043,6 @@ static void gcm_get_tiled_pitch(ctx_t *c) {
 }
 /* [perf] lines (always on): every 30 s and for the whole session at exit - fps, slow frames, GPU time per frame,
  * time blocked in Present (GPU backlog), and the busiest guest threads by CPU time - so any machine's log shows its bottleneck */
-extern double rsx_d3d_gpu_ms, rsx_d3d_present_ms; extern long rsx_d3d_gpu_frames;
-extern volatile long rsx_d3d_sh_compiles, rsx_d3d_sh_compile_us, rsx_d3d_sh_skipped, rsx_d3d_sh_waited;   /* (rsx_d3d.c) */
 typedef struct { uint32_t hist[256]; long frames; double t0, gpu, pres; long gpuf; uint64_t thr[128], proc; long shc, shus, shskip, shwait; } perf_win_t;
 static perf_win_t perf_w, perf_s;   /* window, session */
 static SRWLOCK perf_lock = SRWLOCK_INIT;
@@ -1304,7 +1297,6 @@ static void pngenc_encode(ctx_t *c) {   /* (handle, picture*, encodeParam*, outp
     int och = ocs == 2 ? 3 : (ocs == 20 || ocs == 32 || ocs == 16 || ocs == 6 || ocs == 10) ? 4 : ocs == 8 ? 2 : (ocs == 1 || ocs == 4) ? 1
             : (fmt == 5 ? 4 : fmt);
     {   /* the picture is often a render target (the player's avatar): bring guest memory up to date first */
-        extern void rsx_d3d_flush_range(uint32_t addr, uint32_t size); extern uint32_t rsx_d3d_flush_from;
         uint32_t bytes = (pitch ? pitch : w * 4) * h;
         uint64_t before = 0; for (uint32_t i = 0; i < bytes; i += 64) before += ld_u32(addr + i);
         rsx_d3d_flush_from = 5; rsx_d3d_flush_range(addr, bytes);
@@ -1538,7 +1530,6 @@ static DWORD WINAPI spu_async_worker(void *p) {
         volatile long *done = async_q[i % ASYNC_RING].done;
         memcpy(arg, async_q[i % ASYNC_RING].arg, sizeof arg);
         ReleaseSRWLockExclusive(&async_lock);
-        extern int spu_run_job(uint32_t job, uint32_t desc_size);
         int r = job ? spu_run_job(job, dsz) : spu_run_task(elf, arg, 0, 50000000);
         static volatile long fails; if (r && InterlockedIncrement(&fails) <= 10) printf("[spu] async %s 0x%08x failed (%d)\n", job ? "job" : "task", job ? job : elf, r);
         InterlockedIncrement(done);
@@ -1577,7 +1568,6 @@ static int spu_async_submit(uint32_t elf, const uint32_t arg[4]) {
     return 1;
 }
 
-extern volatile long rsx_flips;
 void hook_qtask_spu_launch(ctx_t *c) {
     {   /* debug: MNR_SPUJOB_LOG=1 - every SPU job launch: caller, program, arguments (DXT jobs: source and destination) */
         static int jl = -1; static volatile long n; if (jl < 0) jl = getenv("MNR_SPUJOB_LOG") != NULL;
@@ -1590,10 +1580,9 @@ void hook_qtask_spu_launch(ctx_t *c) {
     if ((uint32_t)c->lr == G_LR_DXT_JOB) {   /* DXT compression job: run it here */
         if (qtask_log < 0) { const char *e = getenv("MNR_QTASK_LOG"); qtask_log = e && *e == '1'; }
         {   /* the source is usually a render target the GPU just composited: bring guest memory up to date */
-            extern void rsx_d3d_flush_range(uint32_t addr, uint32_t size);
             uint32_t src = ld_u32(ARG32(3)), pitch = ld_u32(ARG32(3) + 8), blocks = ld_u32(ARG32(3) + 12), w = pitch / 4;
             {   static int nl, on = -1; if (on < 0) on = getenv("MNR_DXT_LOG") != NULL; if (on && nl++ < 3000) printf("[dxtjob] flip %ld src 0x%08x dst 0x%08x pitch %u blocks %u -> flush 0x%x bytes\n", (long)rsx_flips, src, ld_u32(ARG32(3) + 4), pitch, blocks, w >= 4 ? pitch * ((blocks / (w / 4)) * 4) : 0); }
-            if (src && w >= 4) { extern uint32_t rsx_d3d_flush_from; rsx_d3d_flush_from = 4; rsx_d3d_flush_range(src, pitch * ((blocks / (w / 4)) * 4)); }
+            if (src && w >= 4) { rsx_d3d_flush_from = 4; rsx_d3d_flush_range(src, pitch * ((blocks / (w / 4)) * 4)); }
         }
         if (qtask_log) {
             uint32_t src = ld_u32(ARG32(3)); uint64_t sum[4] = {0};
@@ -2123,7 +2112,7 @@ static DWORD WINAPI osk_thread(void *p) {
             return 0;
         }
     }
-    extern HWND rsx_window; if (rsx_window) SetForegroundWindow(rsx_window);   /* the keys go to the game window */
+    if (rsx_window) SetForegroundWindow(rsx_window);   /* the keys go to the game window */
     return 0;
 }
 static void be_wstr_in(uint32_t a, WCHAR *out, size_t cap) {   /* guest big-endian UTF-16 -> host */
@@ -3178,7 +3167,6 @@ static void pad_get_info2(ctx_t *c) {   /* CellPadInfo2 {max_connect, now_connec
     st_u32(p + 4, 1 + two);
     RET(0);
 }
-extern HWND rsx_window;   /* present.c */
 static int key(int vk);
 int mnr_key_down(int vk) { return key(vk); }   /* voice.c: push to talk */
 static int key(int vk) {
@@ -3277,16 +3265,13 @@ static void pad_get_data(ctx_t *c) {   /* (port, CellPadData {s32 len; u16 butto
     if (key('2')) d2 |= 0x02; if (key('1')) d2 |= 0x01;
     static long autodrive = -2;
     if (autodrive == -2) { const char *e = getenv("MNR_AUTODRIVE"); autodrive = e ? atol(e) : -1; }
-    extern volatile long rsx_flips;
     static int noskip = -1; if (noskip < 0) noskip = getenv("MNR_AUTOPRESS_NOSKIP") != NULL;
     LARGE_INTEGER hq, hf; QueryPerformanceCounter(&hq); QueryPerformanceFrequency(&hf);
-    extern volatile LONGLONG fs_movie_read_qpc;
     int hold = noskip && ((fs_movies_open > 0 && hq.QuadPart - fs_movie_read_qpc < 2 * hf.QuadPart) || GetTickCount64() < nis_hold_until);   /* let videos and cutscenes play out */
 #ifdef G_AI_CONTROLS_HUMANS
     {   /* MNR_AI_PLAYER=1 (tests): the game's own debug option "AIControlsHumans", so the AI drives the player's kart;
          * =2: only once a race track (.TRK) has been opened (in ModSpot the AI drove off and menu presses did nothing);
          * =3: only once the race itself has begun (split-screen setup menus come after ModSpot's track is open) */
-        extern volatile int race_track_opened, race_began;
         static int ai = -1; if (ai < 0) { const char *e = getenv("MNR_AI_PLAYER"); ai = e ? atoi(e) : 0; }
         if (ai == 1 || (ai == 2 && race_track_opened) || (ai == 3 && race_began)) st_u8(G_AI_CONTROLS_HUMANS, 1);
     }
@@ -3523,7 +3508,6 @@ static void cell_fs_open(ctx_t *c) {   /* (path, flags, *fd, arg, size) */
         }
     }
     {   /* MNR_PAD_SCRIPT_AFTER=<file>: the pad script's clock starts when that file is first opened */
-        extern volatile ULONGLONG pad_script_t0;
         const char *want = getenv("MNR_PAD_SCRIPT_AFTER");
         if (want && *want && !pad_script_t0) {
             char up[512], w2[64]; size_t i = 0;
@@ -4670,7 +4654,6 @@ static void apply_patch_file(const char *path) {
 static uint64_t game_arg(ctx_t *c, int k) { return k < 8 ? c->r[3 + k] : ld_u64((uint32_t)c->r[1] + 48 + 8 * k); }
 void prehook_game_printf(ctx_t *c) {
     {   /* the career's LoadUnlocks (0x332DA4) ends with this log call, its unlock table in r29: tracks unlocked here */
-        extern void career_unlock_tracks(uint32_t mgr);
         if ((uint32_t)c->lr == 0x333034) career_unlock_tracks((uint32_t)c->r[29]);
     }
     static int on = -1;
@@ -4693,7 +4676,7 @@ void prehook_game_printf(ctx_t *c) {
         if (o >= sizeof out) o = sizeof out - 1;
     }
     out[o] = 0;
-    { extern volatile int race_began; if (!race_began && strstr(out, "GameStateKart_Race OnEnter")) race_began = 1; }
+    { if (!race_began && strstr(out, "GameStateKart_Race OnEnter")) race_began = 1; }
     static int stamp = -1; if (stamp < 0) stamp = getenv("MNR_GAME_LOG_TIME") != NULL;   /* tests: seconds since boot */
     if (stamp) { printf("[game] @%.3f %s%s", GetTickCount64() / 1000.0, out, o && out[o - 1] == '\n' ? "" : "\n"); return; }
     printf("[game] %s%s", out, o && out[o - 1] == '\n' ? "" : "\n");

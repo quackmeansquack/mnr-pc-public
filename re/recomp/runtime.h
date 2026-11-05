@@ -24,6 +24,9 @@ typedef struct ctx {
 
 typedef struct { uint32_t addr; void (*fn)(ctx_t *); } fn_entry_t;
 
+extern const fn_entry_t fn_table[];
+extern const unsigned fn_table_count;
+
 extern uint8_t *guest_mem;   /* base of the 4 GB guest address space */
 
 #define R(n) (c->r[n])

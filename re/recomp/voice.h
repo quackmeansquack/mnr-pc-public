@@ -4,6 +4,11 @@
 
 extern void (*voice_notify)(uint64_t event, uint64_t data2);   /* set by host.c: to the queues the game registered */
 extern volatile long voice_talking, voice_mic_state, voice_active;
+extern volatile unsigned long voice_mic_changed;   /* GetTickCount of the last microphone change */
+extern volatile float voice_mic_level;             /* 0..1, the microphone's level this tick */
+extern volatile long voice_codec_missing;          /* no firmware library found (voice_celp.c) */
+const char *voice_mic_name(void);
+void voice_mic_cycle(void);
 int voice_ptt_key(void);
 int voice_ptt_mode(void);
 uint32_t voice_init(void);

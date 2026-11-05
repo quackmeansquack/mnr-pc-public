@@ -7,6 +7,23 @@
 typedef struct { uint32_t offset, pitch, width, height; } rsx_display_t;
 extern rsx_display_t rsx_display[8];   /* cellGcmSetDisplayBuffer */
 extern volatile long rsx_flips;
+extern volatile const char *rsx_cp_state;   /* host.c: what the command processor is doing */
+
+/* vertex program memory and its change counters (rsx.c, rsx_render.c) */
+extern uint32_t rsx_vp[512][4];
+extern uint32_t rsx_vpc[468][4];
+extern uint32_t rsx_vp_gen_pub;
+extern uint32_t rsx_vpc_gen;
+
+/* frame logging and the MNR_RSX_DRAW_HEAVY gate (rsx.c, rsx_render.c, present.c) */
+extern double rsx_draw_seconds;
+extern volatile int rsx_heavy_started;
+extern long rsx_heavy_flip;
+extern long rsx_rg_now_calls;
+extern double rsx_rg_now_s, rsx_ww_scan_s;
+extern void *rsx_rg_callers[16];
+extern long rsx_rg_caller_n[16];
+void rsx_ww_kick(long frame);
 
 void rsx_method(unsigned subchannel, uint32_t method, uint32_t arg);
 void rsx_flip(uint32_t buffer);

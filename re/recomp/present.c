@@ -6,8 +6,12 @@
 #include <string.h>
 #include <windows.h>
 #include "runtime.h"
+#include "host.h"
+#include "audio.h"
+#include "voice.h"
 #include "rsx.h"
 #include "rsx_d3d.h"
+#include "present.h"
 
 static HWND wnd;
 static uint32_t *pixels;            /* host BGRA copy of the last presented frame */
@@ -33,18 +37,16 @@ static LRESULT CALLBACK wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_KEYDOWN:
-        if (wp == VK_F9 && !(lp & (1 << 30))) { extern void mnr_request_dump(void); mnr_request_dump(); }   /* thread dump to logs/ */
+        if (wp == VK_F9 && !(lp & (1 << 30))) { mnr_request_dump(); }   /* thread dump to logs/ */
         if (wp == VK_F11 && !(lp & (1 << 30))) { toggle_fullscreen(h); return 0; }
-        { extern int osk_key(unsigned msg, unsigned wp); if (osk_key(WM_KEYDOWN, (unsigned)wp)) return 0; }   /* the text entry (host.c) */
+        { if (osk_key(WM_KEYDOWN, (unsigned)wp)) return 0; }   /* the text entry (host.c) */
         {   /* - and = (or the numpad's - and +): the game's overall volume (audio.c) */
-            extern void audio_volume_step(int dir);
             if (wp == VK_OEM_MINUS || wp == VK_SUBTRACT) { audio_volume_step(-1); return 0; }
             if (wp == VK_OEM_PLUS || wp == VK_ADD) { audio_volume_step(1); return 0; }
-            if (wp == VK_F8 && !(lp & (1 << 30))) { extern void voice_mic_cycle(void); voice_mic_cycle(); return 0; }   /* voice.c: next microphone */
+            if (wp == VK_F8 && !(lp & (1 << 30))) { voice_mic_cycle(); return 0; }   /* voice.c: next microphone */
         }
         break;
     case WM_CHAR: {   /* typed text for the text entry; an ANSI window: characters above 127 come in the system code page */
-        extern int osk_key(unsigned msg, unsigned wp);
         unsigned ch = (unsigned)wp;
         if (ch >= 128 && ch < 256) { char b = (char)ch; WCHAR w; if (MultiByteToWideChar(CP_ACP, 0, &b, 1, &w, 1) == 1) ch = w; }
         if (osk_key(WM_CHAR, ch)) return 0;
@@ -150,14 +152,13 @@ void rsx_present(uint32_t buffer) {
         }
     }
     int shot = want_shot(n);
-    {   extern volatile int pad_script_shot; static int k;   /* MNR_PAD_SCRIPT "shot" steps */
+    {   static int k;   /* MNR_PAD_SCRIPT "shot" steps */
         if (pad_script_shot) { pad_script_shot = 0; shot = 2 + k++; } }
     {   /* MNR_SHOT_EVERY=<k>: every k-th frame once drawing is on (with MNR_RSX_DRAW_HEAVY) */
-        extern volatile int rsx_heavy_started; extern long rsx_heavy_flip;
         const char *e = getenv("MNR_SHOT_EVERY");
         if (e && rsx_heavy_started == 1 && rsx_heavy_flip && n > rsx_heavy_flip + 1 && (n - rsx_heavy_flip) % atol(e) == 0) shot = 1;
     }
-    {   extern void perf_frame(void); perf_frame(); }   /* [perf] lines (host.c) */
+    {   perf_frame(); }   /* [perf] lines (host.c) */
     if (rsx_use_d3d == 1) {
         rsx_d3d_present(buffer);
         if (!shot) return;

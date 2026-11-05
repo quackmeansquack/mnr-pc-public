@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include "runtime.h"
+#include "host.h"
 #include "audio.h"
 #include "voice.h"
 
@@ -82,7 +83,7 @@ volatile long voice_talking, voice_mic_state;   /* talking: key held (or voice h
 volatile long voice_active;                     /* the game's voice chat is running */
 volatile long voice_send_state;                 /* the encoder: 1 runs, -1 could not start */
 static void settings_load(void) {
-    char ini[MAX_PATH]; extern const char *mnr_settings_path(void);
+    char ini[MAX_PATH];
     snprintf(ini, sizeof ini, "%s", mnr_settings_path());
     ptt_mode = GetPrivateProfileIntA("voice", "push_to_talk", 1, ini) != 0;
     char k[32]; GetPrivateProfileStringA("voice", "ptt_key", "T", k, sizeof k, ini);
@@ -100,7 +101,6 @@ void voice_mic_cycle(void) {
     int next = cur + 1 >= (int)n ? -1 : cur + 1;
     if (next < 0) mic_want[0] = 0;
     else { WAVEINCAPSA c; if (waveInGetDevCapsA((UINT)next, &c, sizeof c) == MMSYSERR_NOERROR) snprintf(mic_want, sizeof mic_want, "%s", c.szPname); }
-    extern const char *mnr_settings_path(void);
     WritePrivateProfileStringA("voice", "mic", mic_want, mnr_settings_path());
     snprintf(mic_name_cur, sizeof mic_name_cur, "%s", mic_want[0] ? mic_want : "Windows default");
     mic_reopen = 1; voice_mic_changed = GetTickCount() | 1;
@@ -336,7 +336,6 @@ static void tick(void) {
     if (mic_reopen) { mic_reopen = 0; mic_close(); mic_failed = 0; }
     if (want_mic) mic_open(); else mic_close();
     voice_mic_state = want_mic ? (wi ? 1 : -1) : 0;
-    extern int mnr_key_down(int vk);
     int key = want_mic && mnr_key_down(ptt_vk);
     static int was_sending;
     if (wi == TEST_MIC) key = 1;

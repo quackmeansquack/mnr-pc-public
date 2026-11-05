@@ -27,6 +27,7 @@
 #include <mmsystem.h>
 #include <dinput.h>
 #include "input.h"
+#include "present.h"
 
 static struct { float wheel_degrees, steer_lock, ffb, ffb_spring, ffb_damper; unsigned ffb_vid, ffb_pid; float steer_boost; } opt = {0, 0, 0, 40, 20, 0, 0, 0};
 static void ffb_start(void);
@@ -258,7 +259,6 @@ static LPDIRECTINPUTEFFECT ff_condition(REFGUID kind, float strength) {   /* str
 
 static DWORD WINAPI ff_thread(void *p) {
     (void)p;
-    extern HWND rsx_window;
     for (int i = 0; i < 200 && !rsx_window; i++) Sleep(50);   /* exclusive access needs our window */
     if (!rsx_window) { printf("[ffb] no window\n"); return 0; }
     if (FAILED(DirectInput8Create(GetModuleHandleA(NULL), DIRECTINPUT_VERSION, &IID_IDirectInput8A, (void **)&ff_di, NULL))) { printf("[ffb] DirectInput unavailable\n"); return 0; }

@@ -9,6 +9,7 @@
 #include <math.h>
 #include <mmsystem.h>
 #include "runtime.h"
+#include "host.h"
 #include "audio.h"
 
 #define MAX_PORTS 8
@@ -41,7 +42,6 @@ static float master(void) { return master_pct < 0 ? 1.0f : master_pct / 100.0f; 
 volatile DWORD audio_volume_changed;   /* GetTickCount of the last change (the overlay shows the level a moment) */
 int audio_volume_pct(void) { return master_pct < 0 ? 100 : (int)master_pct; }
 void audio_volume_step(int dir) {
-    extern const char *mnr_settings_path(void);
     LONG v = audio_volume_pct() + 10 * dir; v = v < 0 ? 0 : v > 100 ? 100 : v;
     master_pct = v; audio_volume_changed = GetTickCount() | 1;
     char b[16]; snprintf(b, sizeof b, "%ld", v);
@@ -253,7 +253,7 @@ int audio_init(void) {
     if (index_area) return 0;
     if (muted < 0) { const char *e = getenv("MNR_MUTE"); muted = e && *e == '1'; }
     if (getenv("MNR_AUDIO_SILENT")) { silent_test = 1; muted = 0; }
-    { extern const char *mnr_settings_path(void); int v = GetPrivateProfileIntA("audio", "volume", 100, mnr_settings_path()); master_pct = v < 0 ? 0 : v > 100 ? 100 : v; }
+    { int v = GetPrivateProfileIntA("audio", "volume", 100, mnr_settings_path()); master_pct = v < 0 ? 0 : v > 100 ? 100 : v; }
     index_area = audio_guest_alloc(MAX_PORTS * 8, 0x80);
     mem_zero(index_area, MAX_PORTS * 8);
     CreateThread(NULL, 1 << 16, audio_thread, NULL, 0, NULL);

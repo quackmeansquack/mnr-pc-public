@@ -3,7 +3,8 @@
 typedef struct { uint32_t elf; void (*fn)(spu_t *); } spu_prog_t;
 extern const spu_prog_t spu_progs[]; extern const int spu_nprogs;
 #include <windows.h>
-extern volatile long rsx_flips;
+#include "rsx.h"
+#include "spu.h"
 double spu_seconds; uint64_t spu_steps;
 int spu_run_task_inner(uint32_t elf, const uint32_t arg[4], uint64_t taskset_arg, uint64_t max_steps);
 int spu_run_task(uint32_t elf, const uint32_t arg[4], uint64_t taskset_arg, uint64_t max_steps) {
