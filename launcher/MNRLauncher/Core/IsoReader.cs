@@ -18,6 +18,7 @@ namespace MNRLauncher.Core;
 /// </summary>
 public sealed class IsoReader : IDisposable
 {
+    /// <summary>A file or directory entry from the ISO's directory records.</summary>
     public record Entry(string Path, bool IsDir, List<(long Lba, long Size)> Extents)
     {
         /// <summary>Total size across all extents (multi-extent files). O(n) - computed each time.</summary>
@@ -88,7 +89,7 @@ public sealed class IsoReader : IDisposable
         }
     }
 
-    // Read all extents of a file entry into a single byte array
+    /// <summary>Reads all extents of a file entry into a single byte array.</summary>
     public byte[] Read(Entry e)
     {
         var b = new byte[e.Size]; long o = 0;
@@ -133,10 +134,11 @@ public sealed class IsoReader : IDisposable
         }
     }
 
-    // Filter: only extract PS3_GAME/, PS3_UPDATE/, and PS3_DISC.SFB
+    /// <summary>True for the disc paths the launcher extracts (PS3_GAME, PS3_UPDATE and PS3_DISC.SFB).</summary>
     public static bool Wanted(string path) =>
         path.StartsWith("PS3_GAME/", StringComparison.OrdinalIgnoreCase) || path.StartsWith("PS3_UPDATE/", StringComparison.OrdinalIgnoreCase)
         || path.Equals("PS3_DISC.SFB", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>Closes the disc image.</summary>
     public void Dispose() => f.Dispose();
 }

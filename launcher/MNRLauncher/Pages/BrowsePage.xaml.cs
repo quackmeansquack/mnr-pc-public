@@ -8,6 +8,7 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Creations &gt; Browse online tab: browses the server's creations and downloads them.</summary>
 public partial class BrowsePage : UserControl, IRefresh
 {
     /// <summary>A row in the creations list: a RemoteCreation with an optional thumbnail and display properties.</summary>
@@ -40,6 +41,7 @@ public partial class BrowsePage : UserControl, IRefresh
     const int PerPage = 24;
     bool loaded;
 
+    /// <summary>Creates the browse page.</summary>
     public BrowsePage() { InitializeComponent(); }
 
     /// <summary>Refreshes the browse page: creates a new API client, updates the source description, and loads the listings asynchronously if not already loaded.</summary>
@@ -77,7 +79,7 @@ public partial class BrowsePage : UserControl, IRefresh
         catch (Exception ex) { Message.Text = "Couldn't reach the server:\n" + ex.Message; }
     }
 
-    /// <summary>Loads an image from a URL with caching and decode pixel limit.</summary>
+    /// <summary>Loads an image from a URL at 256 px decode width, fully into memory.</summary>
     static ImageSource? Image(string url)
     {
         try

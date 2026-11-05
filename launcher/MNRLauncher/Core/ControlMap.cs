@@ -129,6 +129,7 @@ public static class ControlMap
         return list;
     }
 
+    /// <summary>Saves all bindings with the current wheel options.</summary>
     public static void Save(List<Binding> list) => Save(list, LoadOptions());
 
     /// <summary>

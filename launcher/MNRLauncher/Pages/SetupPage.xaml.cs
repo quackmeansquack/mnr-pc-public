@@ -15,8 +15,10 @@ public partial class SetupPage : UserControl, IRefresh
 {
     CancellationTokenSource? cts;
 
+    /// <summary>Creates the setup page.</summary>
     public SetupPage() { InitializeComponent(); }
 
+    /// <summary>Shows the state of each setup step (disc, update, voice, build) and enables the applicable buttons.</summary>
     public void Refresh()
     {
         if (cts != null) return;
@@ -28,35 +30,42 @@ public partial class SetupPage : UserControl, IRefresh
         Status.Text = GameSetup.Complete ? "The game is ready to play." : "";
     }
 
+    /// <summary>Lets the player pick a disc image (.iso) as the game source.</summary>
     void PickIso_Click(object sender, RoutedEventArgs e)
     {
         var d = new Microsoft.Win32.OpenFileDialog { Filter = "Disc images (*.iso)|*.iso|All files|*.*", Title = "Your ModNation Racers disc image" };
         if (d.ShowDialog() == true) DiscSource.Text = d.FileName;
     }
+    /// <summary>Lets the player pick an extracted disc folder (containing PS3_GAME).</summary>
     void PickDiscFolder_Click(object sender, RoutedEventArgs e)
     {
         var d = new Microsoft.Win32.OpenFolderDialog { Title = "The game folder from your disc dump (containing PS3_GAME)" };
         if (d.ShowDialog() == true) DiscSource.Text = d.FolderName;
     }
+    /// <summary>Lets the player pick the 1.11 update package.</summary>
     void PickPkg_Click(object sender, RoutedEventArgs e)
     {
         var d = new Microsoft.Win32.OpenFileDialog { Filter = "PS3 packages (*.pkg)|*.pkg", Title = "The ModNation Racers 1.11 update package" };
         if (d.ShowDialog() == true) UpdateSource.Text = d.FileName;
     }
+    /// <summary>Lets the player pick a PS3 system update file for voice chat.</summary>
     void PickPup_Click(object sender, RoutedEventArgs e)
     {
         var d = new Microsoft.Win32.OpenFileDialog { Filter = "PS3 system update (PS3UPDAT.PUP)|*.PUP|All files|*.*", Title = "A PS3 system update file" };
         if (d.ShowDialog() == true) PupSource.Text = d.FileName;
     }
 
+    /// <summary>Shows progress text and fraction on the UI thread (a negative fraction means indeterminate).</summary>
     void Report(string text, double fraction) => Dispatcher.BeginInvoke(() =>
     {
         Status.Text = text;
         Bar.IsIndeterminate = fraction < 0;
         if (fraction >= 0) Bar.Value = 1000 * Math.Clamp(fraction, 0, 1);
     });
+    /// <summary>Appends a line to the setup log on the UI thread.</summary>
     void AddLog(string line) => Dispatcher.BeginInvoke(() => Log.Text = (Log.Text.Length > 0 ? Log.Text + "\n" : "") + line);
 
+    /// <summary>Runs the setup steps in order (system update, runtime, disc, update, tools, build); cancellable.</summary>
     async void Setup_Click(object sender, RoutedEventArgs e)
     {
         if (GameRunner.IsRunning) { Status.Text = "Close the game first."; return; }
@@ -81,6 +90,7 @@ public partial class SetupPage : UserControl, IRefresh
         finally { Busy(false); Refresh(); if (GameSetup.Complete) Status.Text = "The game is ready to play."; MainWindow.SetupChanged(); }
     }
 
+    /// <summary>Recompiles the game from the already-installed files.</summary>
     async void Rebuild_Click(object sender, RoutedEventArgs e)
     {
         if (GameRunner.IsRunning) { Status.Text = "Close the game first."; return; }
@@ -96,8 +106,10 @@ public partial class SetupPage : UserControl, IRefresh
         finally { Busy(false); Refresh(); MainWindow.SetupChanged(); }
     }
 
+    /// <summary>Cancels the running setup or rebuild.</summary>
     void Cancel_Click(object sender, RoutedEventArgs e) => cts?.Cancel();
 
+    /// <summary>Switches the page between busy (progress bar and Cancel shown) and idle states.</summary>
     void Busy(bool on)
     {
         if (on) cts = new CancellationTokenSource(); else { cts?.Dispose(); cts = null; }

@@ -7,8 +7,10 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Creations &gt; Installed and mine tab: lists local creations and exports, imports and checks them.</summary>
 public partial class CreationsPage : UserControl, IRefresh
 {
+    /// <summary>Creates the creations page.</summary>
     public CreationsPage() { InitializeComponent(); }
 
     /// <summary>Scans the creations directory and populates the UI list with available creations.</summary>

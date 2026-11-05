@@ -78,7 +78,7 @@ public static class SelfDecrypter
         ulong elfOff = U64(f, 0x30), phdrOff = U64(f, 0x38), shdrOff = U64(f, 0x40), suppOff = U64(f, 0x58), suppSize = U64(f, 0x60);
 
         // --- NPDRM layer: decrypt metadata info ---
-        // metadata info is at metaOff + 0x20 (40 bytes)
+        // metadata info is at metaOff + 0x20 (64 bytes)
         var info = new byte[0x40]; Array.Copy(f, (long)metaOff + 0x20, info, 0, 0x40);
         // Walk supplemental headers to find NPD (license type 3 = free)
         for (ulong p = suppOff; p < suppOff + suppSize && p + 16 <= (ulong)f.Length;)

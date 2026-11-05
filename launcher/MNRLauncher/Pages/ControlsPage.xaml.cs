@@ -7,6 +7,7 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Settings &gt; Controls tab: maps keyboard, controller and wheel inputs and configures the wheel.</summary>
 public partial class ControlsPage : UserControl, IRefresh
 {
     /// <summary>A UI row displaying a control definition and its current bindings.</summary>
@@ -28,6 +29,7 @@ public partial class ControlsPage : UserControl, IRefresh
     readonly Dictionary<uint, Joystick.JOYINFOEX> baseline = new();
     (uint dev, int axis, uint rest, uint extreme)? moving;
 
+    /// <summary>Creates the controls page.</summary>
     public ControlsPage()
     {
         InitializeComponent();

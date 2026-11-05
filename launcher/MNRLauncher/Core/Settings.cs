@@ -63,7 +63,7 @@ public class Settings
     /// <summary>Filename of the crash log the user has already acknowledged on the Play page.</summary>
     public string CrashSeen { get; set; } = "";
 
-    /// <summary>Latest GitHub release tag the user has seen at startup (used to suppress "what's new" dialog).</summary>
+    /// <summary>Latest GitHub release tag fetched at startup, shown as "What's new" on the Play page.</summary>
     public string LatestRelease { get; set; } = "";
 
     /// <summary>Release notes text for the LatestRelease tag.</summary>
@@ -93,7 +93,7 @@ public class Settings
     /// <summary>Flag: whether the game's composite cache was cleared once (set by MainWindow on first run).</summary>
     public int CompositeCacheReset { get; set; }
 
-    /// <summary>HTTP port for the launcher's local server. 0 means use the default.</summary>
+    /// <summary>Port of the creation server (default 10050 when 0). Used to build creation download/upload URLs.</summary>
     public int ServerPort { get; set; }
 
     /// <summary>Player's display name (shown in online lobbies).</summary>

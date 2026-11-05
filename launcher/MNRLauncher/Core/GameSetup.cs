@@ -86,6 +86,7 @@ public static class GameSetup
     static string? TitleId(string sfoPath) => File.Exists(sfoPath) ? PkgInstaller.SfoString(File.ReadAllBytes(sfoPath), "TITLE_ID") : null;
 
     // ---- 1. disc
+    /// <summary>Copies PS3_GAME and the disc metadata from the disc image or folder into extracted\.</summary>
     public static async Task InstallDisc(string source, Report report, CancellationToken ct)
     {
         if (DiscDone) { report("Disc files: already copied.", 1); return; }
@@ -138,6 +139,7 @@ public static class GameSetup
     }
 
     // ---- 2 + 3. update and executable
+    /// <summary>Installs the 1.11 update package and writes the decrypted EBOOT.elf, verifying its hash.</summary>
     public static async Task InstallUpdate(string pkg, Report report, CancellationToken ct)
     {
         if (UpdateDone) { report("1.11 update: already installed.", 1); return; }
@@ -156,6 +158,7 @@ public static class GameSetup
     }
 
     // ---- 4. tools
+    /// <summary>Downloads the compiler and Python if they are missing.</summary>
     public static async Task EnsureTools(Report report, CancellationToken ct)
     {
         Directory.CreateDirectory(ToolsDir);
@@ -180,6 +183,7 @@ public static class GameSetup
     }
 
     // ---- 5. build
+    /// <summary>Runs build.py to recompile the game (incremental, with PGO when the profile is present).</summary>
     public static async Task Build(Report report, Action<string> log, CancellationToken ct)
     {
         if (!RuntimePresent) throw new FileNotFoundException("The game's PC runtime (re\\recomp) is missing: check for updates first.");

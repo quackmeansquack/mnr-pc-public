@@ -10,6 +10,7 @@ namespace MNRLauncher.Core;
 public static class Joystick
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    /// <summary>WinMM joystick capabilities structure (joyGetDevCaps).</summary>
     struct JOYCAPSW
     {
         public ushort wMid, wPid;
@@ -19,6 +20,7 @@ public static class Joystick
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szOEMVxD;
     }
     [StructLayout(LayoutKind.Sequential)]
+    /// <summary>WinMM joystick state structure (joyGetPosEx).</summary>
     public struct JOYINFOEX
     {
         public uint dwSize, dwFlags, dwXpos, dwYpos, dwZpos, dwRpos, dwUpos, dwVpos, dwButtons, dwButtonNumber, dwPOV, dwReserved1, dwReserved2;
@@ -68,12 +70,14 @@ public static class Joystick
         return null;
     }
 
+    /// <summary>Reads the current state of a joystick; false when it is not connected.</summary>
     public static bool Read(uint id, out JOYINFOEX st)
     {
         st = new JOYINFOEX { dwSize = (uint)Marshal.SizeOf<JOYINFOEX>(), dwFlags = JOY_RETURNALL };
         return joyGetPosEx(id, ref st) == 0;
     }
 
+    /// <summary>The value (0-65535) of axis i (X, Y, Z, R, U, V).</summary>
     public static uint Axis(in JOYINFOEX s, int i) => i switch { 0 => s.dwXpos, 1 => s.dwYpos, 2 => s.dwZpos, 3 => s.dwRpos, 4 => s.dwUpos, _ => s.dwVpos };
     public static readonly string[] AxisNames = { "X", "Y", "Z", "R", "U", "V" };
 }

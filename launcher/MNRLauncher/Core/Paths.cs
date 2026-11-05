@@ -5,7 +5,7 @@ namespace MNRLauncher.Core;
 
 /// <summary>Centralised filesystem layout. All launcher paths flow through this class so the rest of the code
 /// never concatenates strings with magic folder names.</summary>
-///
+/// <remarks>
 /// <para>Discovery algorithm (FindRoot):</para>
 /// <list type="bullet">
 ///   <item><description>1. Check MNR_ROOT environment variable (for portable/alternative installs).</description></item>
@@ -14,6 +14,7 @@ namespace MNRLauncher.Core;
 ///   <item><description>3. Read root.txt from %APPDATA%\MNRLauncher (user-chosen install location for a standalone launcher).</description></item>
 ///   <item><description>4. Fall back to %UserProfile%\Games\MNR (fresh standalone launcher in Downloads, etc.).</description></item>
 /// </list>
+/// </remarks>
 public static class Paths
 {
     public static string Root { get; } = FindRoot();

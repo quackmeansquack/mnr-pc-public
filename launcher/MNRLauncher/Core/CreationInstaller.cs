@@ -121,6 +121,7 @@ public static class CreationInstaller
     /// the game's permission doesn't come from there (the studios' checks are overridden in the game instead,
     /// MNR_ALLOW_REMIX), so those bytes are put back. Returns how many were fixed.</summary>
     const int RemixByte = 0x8C; const byte RemixBit = 0x80;
+    /// <summary>Reverts the old remix permission bit on downloads recorded in the index; returns how many were fixed.</summary>
     public static int UndoRemixPatches()
     {
         var ix = LoadIndex(); int n = 0;
@@ -149,12 +150,14 @@ public static class CreationInstaller
     public static List<(int revivalId, string stem)> OldInstalls() =>
         LoadIndex().Where(kv => int.TryParse(kv.Key, out _) && File.Exists(kv.Value.Stem + ".CMD"))
                    .Select(kv => (int.Parse(kv.Key), kv.Value.Stem)).ToList();
+    /// <summary>Deletes the old install's files and removes its index entry.</summary>
     public static void ForgetOldInstall(string key, string stem)
     {
         foreach (var ext in new[] { ".SAV", ".TRK", ".CMD", ".PNG", "_SMALL.PNG", ".STAT" })
             if (File.Exists(stem + ext)) File.Delete(stem + ext);
         var ix = LoadIndex(); ix.Remove(key); SaveIndex(ix);
     }
+    /// <summary>Writes a 128x128 _SMALL.PNG from the full preview.</summary>
     public static void WriteSmallFrom(string big, string small) => WriteSmall(big, small);
 
     /// <summary>The game's menus draw _SMALL.PNG into a 128x128 slot (every thumbnail the game makes is that size);

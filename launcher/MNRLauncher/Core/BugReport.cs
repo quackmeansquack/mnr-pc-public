@@ -55,11 +55,7 @@ public static class BugReport
     }
 
     /// <summary>The newest game log, if that session ended in a crash (host.c's crash handler, or a jump to code the
-    /// recompiler doesn't have): its file name and when it was written.</summary>
-    /// <summary>
-    /// Checks the newest game log for crash markers (host exception or unrecompilable JIT function).
-    /// Returns the log file name and timestamp if a crash is detected, null otherwise.
-    /// </summary>
+    /// recompiler doesn't have): its file name and when it was written, or null if the newest log has no crash marker.</summary>
     public static (string file, DateTime when)? LastCrash()
     {
         try

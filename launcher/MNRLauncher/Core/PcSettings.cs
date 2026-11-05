@@ -28,6 +28,7 @@ public static class PcSettings
 
     // microphones as the game lists them (voice.c: waveIn, names up to 31 characters)
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    /// <summary>WinMM recording-device capabilities structure (waveInGetDevCaps).</summary>
     struct WaveInCaps { public ushort Mid, Pid; public uint DriverVersion; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Name; public uint Formats; public ushort Channels, Reserved; }
     [DllImport("winmm.dll")] static extern uint waveInGetNumDevs();
     [DllImport("winmm.dll", CharSet = CharSet.Ansi)] static extern uint waveInGetDevCapsA(UIntPtr id, ref WaveInCaps caps, uint size);

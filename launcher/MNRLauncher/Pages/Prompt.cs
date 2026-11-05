@@ -6,6 +6,7 @@ namespace MNRLauncher.Pages;
 /// <summary>A small text-input dialog in the launcher's style.</summary>
 public static class Prompt
 {
+    /// <summary>Shows the input dialog and returns the trimmed text, or null when cancelled.</summary>
     public static string? Ask(string title, string label, string initial = "", bool multiline = false)
     {
         var box = new TextBox { Text = initial, Margin = new Thickness(0, 8, 0, 14), AcceptsReturn = multiline, TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap, Height = multiline ? 90 : double.NaN };

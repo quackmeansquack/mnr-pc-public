@@ -7,9 +7,7 @@ using System.Windows;
 
 namespace MNRLauncher;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
+/// <summary>Launcher entry point: runs the command-line test modes without a window, or opens the main window.</summary>
 public partial class App : Application
 {
     /// <summary>MNRLauncher.exe --play (tests): no window; starts the game as PLAY would, with the saved settings (online

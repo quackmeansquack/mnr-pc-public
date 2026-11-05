@@ -52,6 +52,7 @@ public class Mod
     }
 }
 
+/// <summary>Scans the mods folder, resolves load order and conflicts, and builds the game's mod environment.</summary>
 public static class ModManager
 {
     /// <summary>
@@ -125,7 +126,7 @@ public static class ModManager
     }
 
     /// <summary>
-    /// Returns the MNR_MODS and MNR_PATCHES environment variables needed by the game to load enabled mods.
+    /// Returns the MNR_MODS and MNR_MOD_PATCHES environment variables needed by the game to load enabled mods.
     /// Mods are semicolon-separated paths; patches are semicolon-separated patch file paths.
     /// </summary>
     public static (string mods, string patches) Environment(IEnumerable<Mod> enabledInOrder)

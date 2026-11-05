@@ -81,7 +81,7 @@ public sealed class RpcnClient : IDisposable
     public long UserId { get; private set; }               // RPCN's id for the account (the game's UDP pings carry it)
     /// <summary>The server's IP address as seen by this client.</summary>
     public IPAddress? ServerAddress => (tcp?.Client.RemoteEndPoint as IPEndPoint)?.Address;
-    /// <summary>True while the connection is alive and the reader thread is running.</summary>
+    /// <summary>True until the reader thread detects that the connection has closed.</summary>
     public bool Alive { get; private set; } = true;
     /// <summary>Server notifications (command, payload) once <see cref="StartReader"/> runs.</summary>
     public event Action<ushort, byte[]>? Notification;
@@ -481,6 +481,7 @@ public sealed class RpcnClient : IDisposable
         return s;
     }
 
+    /// <summary>Closes the SSL stream and the TCP connection.</summary>
     public void Dispose()
     {
         try { ssl?.Dispose(); } catch { }
@@ -593,6 +594,7 @@ sealed class Sha3
         }
     }
 
+    /// <summary>Finishes the hash and returns the 32-byte digest.</summary>
     public byte[] Final()
     {
         Array.Clear(buf, fill, 136 - fill);
@@ -657,6 +659,7 @@ public sealed class TicketService : IDisposable
     public string LastStatus { get; private set; } = "";
     public event Action<string>? Status;
 
+    /// <summary>Starts the local ticket service on a free port.</summary>
     public TicketService(Func<(string, string, string, string)> account)
     {
         this.account = account;
@@ -840,6 +843,7 @@ public sealed class TicketService : IDisposable
         throw new IOException("unknown request");
     }
 
+    /// <summary>Requests a ticket for the service, retrying once on a fresh session if the kept one dropped.</summary>
     public byte[] Fetch(string service, byte[] cookie)
     {
         try { return Session().RequestTicket(service, cookie); }
@@ -850,5 +854,6 @@ public sealed class TicketService : IDisposable
         }
     }
 
+    /// <summary>Stops the listener and the service loop.</summary>
     public void Dispose() { stop.Cancel(); try { listener.Stop(); } catch { } }
 }

@@ -13,6 +13,7 @@ public class TabsPage : UserControl, IRefresh
     readonly Func<UserControl>[] makers;
     readonly UserControl?[] made;
 
+    /// <summary>Creates the tab control from (name, page factory) pairs; each page is made on first use.</summary>
     public TabsPage(params (string name, Func<UserControl> make)[] pages)
     {
         makers = pages.Select(p => p.make).ToArray();
@@ -22,11 +23,15 @@ public class TabsPage : UserControl, IRefresh
         Content = tabs;
     }
 
+    /// <summary>Number of tabs.</summary>
     public int Count => makers.Length;
+    /// <summary>The selected tab's page, or null if it has not been made yet.</summary>
     public UserControl? Current => tabs.SelectedIndex >= 0 ? made[tabs.SelectedIndex] : null;
 
+    /// <summary>Selects the tab at index and shows its page.</summary>
     public void Select(int index) { tabs.SelectedIndex = index; Show(); }
 
+    /// <summary>Makes the selected tab's page (once) and refreshes it.</summary>
     void Show()
     {
         int i = tabs.SelectedIndex;
@@ -36,5 +41,6 @@ public class TabsPage : UserControl, IRefresh
         if (made[i] is IRefresh r) r.Refresh();
     }
 
+    /// <summary>Selects the first tab when none is selected, then shows it.</summary>
     public void Refresh() { if (tabs.SelectedIndex < 0) tabs.SelectedIndex = 0; else Show(); }
 }

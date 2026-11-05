@@ -108,6 +108,7 @@ public static class CreationDownload
     /// <summary>Constructs the server base URL from settings, using RevivalAddress as default if no address is set.</summary>
     public static string ServerBase(Settings s) =>
         $"http://{(s.ServerAddress.Trim().Length > 0 ? s.ServerAddress.Trim() : RevivalAddress)}:{(s.ServerPort > 0 ? s.ServerPort : 10050)}";
+    /// <summary>True when the settings point at the MNR Revival server.</summary>
     public static bool OnRevival(Settings s) => s.ServerAddress.Trim() == RevivalAddress;
 
     /// <summary>Checks if the server supports the mnrpc import feature by querying /mnrpc/caps.
@@ -135,6 +136,7 @@ public static class CreationDownload
     // ---------------------------------------------------------------- the files
     static readonly (string type, string folder, string ext)[] Kinds = { ("KART", "Vehicle", ".SAV"), ("CHARACTER", "Character", ".SAV"), ("TRACK", "Track", ".TRK") };
     static string FolderOf(string type) => Kinds.First(k => k.type == type).folder;
+    /// <summary>Turns a creation name into the game's file-name form (letters and digits only, upper case).</summary>
     public static string FileName(string name) { var n = Regex.Replace(name, "[^A-Za-z0-9]", "").ToUpperInvariant(); return n.Length > 0 ? n : "CREATION"; }   // (as the game names its downloads: 00007148_DDLOBOTOMYCANYON)
     /// <summary>The creation's own name (the .CMD's first string): the game names a download's files after it
     /// (its "Zurg" is 00007b5b_Zurg.sav, whatever the server lists it as).</summary>
@@ -151,6 +153,7 @@ public static class CreationDownload
         }
         return null;
     }
+    /// <summary>Deletes an installed creation's files (all of them) by id.</summary>
     public static void Remove(int id)
     {
         for (string? stem; (stem = Installed(id)) != null; )

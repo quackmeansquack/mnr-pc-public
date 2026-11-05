@@ -80,7 +80,7 @@ public class RevivalApi
     public string PreviewSmallUrl(int id) => $"{site}/player_creations/{id}/preview_image_64x64.png";
     /// <summary>Returns the URL for a creation's raw data file (data.bin).</summary>
     public string DataUrl(int id) => $"{site}/player_creations/{id}/data.bin";
-    /// <summary>Returns the URL for a creation's stats page on the site.</summary>
+    /// <summary>Returns the site's general creation stats page (the id is not part of the URL).</summary>
     public string PageUrl(int id) => $"{site}/stats/creations/";
 
     /// <summary>

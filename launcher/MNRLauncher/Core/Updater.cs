@@ -123,7 +123,9 @@ public static class Updater
         return h;
     }
 
+    /// <summary>A GitHub release asset (JSON DTO).</summary>
     sealed class GhAsset { [JsonPropertyName("id")] public long Id { get; set; } [JsonPropertyName("name")] public string Name { get; set; } = ""; [JsonPropertyName("size")] public long Size { get; set; } }
+    /// <summary>A GitHub release with its assets (JSON DTO).</summary>
     sealed class GhRelease { [JsonPropertyName("tag_name")] public string Tag { get; set; } = ""; [JsonPropertyName("assets")] public List<GhAsset> Assets { get; set; } = new(); }
 
     /// <summary>Fetches a GitHub release by tag (or latest if tag is null) and parses it.</summary>
@@ -330,7 +332,7 @@ public static class Updater
     }
 
     /// <summary>
-    /// Deletes the old launcher executable left behind by a self-update (launcher.exe.old).
+    /// Deletes the old launcher executable left behind by a self-update (<current exe>.old, e.g. MNRLauncher.exe.old).
     /// Called on launcher start to clean up after previous updates.
     /// </summary>
     public static void CleanUpOldLauncher()

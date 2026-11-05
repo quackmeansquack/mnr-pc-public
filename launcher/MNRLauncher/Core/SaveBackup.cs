@@ -9,6 +9,7 @@ namespace MNRLauncher.Core;
 /// before switching to another profile (and on request). The newest 10 per profile are kept.</summary>
 public static class SaveBackup
 {
+    /// <summary>Folder holding the backup zips (launcher\data\save_backups).</summary>
     public static string Dir => Path.Combine(Paths.LauncherData, "save_backups");
     const int Keep = 10;
 

@@ -20,6 +20,7 @@ public static class PkgInstaller
 {
     static readonly byte[] PkgKeyPs3 = Convert.FromHexString("2E7B71D7C9C9A14EA3221F188828B8F8");
 
+    /// <summary>Outcome of a package install: content id, title id, file count and whether it was licensed.</summary>
     public record Result(string ContentId, string TitleId, int Files, bool Licensed = false);
 
     // NPDRM keys (as RPCS3's Crypto/key_vault.h): .rap -> RIF key, and the EDAT key for encrypted block keys
@@ -31,9 +32,9 @@ public static class PkgInstaller
     static readonly byte[] RapE1 = Convert.FromHexString("A93E1FD67C55A329B75FDDA62A95C7A5");
     // NP_RAP_E2: second round encryption constants for RIF key derivation
     static readonly byte[] RapE2 = Convert.FromHexString("67D45DA3296D006A4E7C537BF5538C74");
-    // NP_EDAT_KEY0: EDAT decryption key for version <= 1
+    // NP_EDAT_KEY0: EDAT decryption key for version != 4
     static readonly byte[] EdatKey0 = Convert.FromHexString("BE959CA8308DEFA2E5E180C63712A9AE");
-    // NP_EDAT_KEY1: EDAT decryption key for version > 1
+    // NP_EDAT_KEY1: EDAT decryption key for version == 4
     static readonly byte[] EdatKey1 = Convert.FromHexString("4CA9C14B01C95309969BEC68AA0BC081");
     /// <summary>ModNation Racers' own license key (klicensee, at 0x137DB5C in the 1.11 executable, which it hands to
     /// sceNpDrmIsAvailable): it decrypts the free DLC packs' licenses (NPD license type 3), no .rap needed.</summary>
@@ -41,7 +42,7 @@ public static class PkgInstaller
 
     /// <summary>
     /// Derives the RIF key from a .rap file (the account's purchase license).
-    /// Mirrors RPCS3's rap_to_rif: AES-CBC decrypt, then 5 rounds of permutation/XOR/shift to recover the klicensee.
+    /// Mirrors RPCS3's rap_to_rif: AES-CBC decrypt, then 5 rounds of permutation/XOR/subtraction to recover the klicensee.
     /// </summary>
     /// <param name="rap">The .rap file content (at least 16 bytes).</param>
     /// <returns>The 16-byte RIF key (klicensee) for the account's license.</returns>
@@ -161,6 +162,7 @@ public static class PkgInstaller
         return outp;
     }
 
+    /// <summary>An entry in the PKG's item table.</summary>
     record Item(string Name, bool IsDir, ulong Offset, ulong Size);
 
     /// <summary>
@@ -207,6 +209,7 @@ public static class PkgInstaller
         return items.Exists(i => !i.IsDir && i.Name.EndsWith(".EDAT", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>Outcome of a mod package extraction: folder, name, file count and skipped entries.</summary>
     public record ModResult(string Folder, string Name, int Files, List<string> Skipped);
 
     /// <summary>

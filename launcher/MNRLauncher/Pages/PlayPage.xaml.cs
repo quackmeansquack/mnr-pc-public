@@ -8,10 +8,12 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Play page: shows the session summary, news, crash notice and game state, and starts the game.</summary>
 public partial class PlayPage : UserControl, IRefresh
 {
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
 
+    /// <summary>Creates the Play page and starts its one-second refresh timer.</summary>
     public PlayPage()
     {
         InitializeComponent();

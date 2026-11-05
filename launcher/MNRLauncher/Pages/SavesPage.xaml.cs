@@ -6,10 +6,13 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Profiles &gt; Save profiles tab: creates, switches, renames, backs up and deletes save profiles.</summary>
 public partial class SavesPage : UserControl, IRefresh
 {
+    /// <summary>Creates the save profiles page.</summary>
     public SavesPage() { InitializeComponent(); }
 
+    /// <summary>Reloads the profile list, keeping the previous selection (or the active profile).</summary>
     public void Refresh()
     {
         var keep = (List.SelectedItem as Profile)?.Folder;

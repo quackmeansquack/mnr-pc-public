@@ -8,11 +8,13 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Profiles &gt; Accounts tab: manages the online accounts (add, create, select and remove).</summary>
 public partial class AccountsPage : UserControl, IRefresh
 {
     bool loading;
     const string KeepSaves = "(keep the current saves)", DefaultSaves = "Default (the game's normal saves)";
 
+    /// <summary>Creates the accounts page.</summary>
     public AccountsPage() { InitializeComponent(); }
 
     /// <summary>Refreshes the accounts page: lists accounts, populates save profiles, and shows the selected account's details.</summary>

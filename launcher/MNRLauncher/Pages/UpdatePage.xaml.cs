@@ -9,11 +9,13 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Install &amp; updates page: checks GitHub releases, downloads and applies updates, and installs DLC packages.</summary>
 public partial class UpdatePage : UserControl, IRefresh
 {
     Updater.Plan? plan;
     CancellationTokenSource? cts;
 
+    /// <summary>Creates the page; the public edition explains the public repository and hides the token fields.</summary>
     public UpdatePage()
     {
         InitializeComponent();
@@ -25,6 +27,7 @@ public partial class UpdatePage : UserControl, IRefresh
 #endif
     }
 
+    /// <summary>Re-reads the saved GitHub account, install folder and install state (does nothing while busy).</summary>
     public void Refresh()
     {
         if (cts != null) return;   // busy
@@ -36,6 +39,7 @@ public partial class UpdatePage : UserControl, IRefresh
         FolderState.Text = Paths.Installed ? "The game is installed here." : "Nothing installed here yet.";
     }
 
+    /// <summary>Stores the repository and (if entered) token from the form; returns the account, or null if incomplete.</summary>
     Updater.Account? SaveAccount()
     {
         var a = Updater.LoadAccount();
@@ -61,6 +65,7 @@ public partial class UpdatePage : UserControl, IRefresh
         return true;
     }
 
+    /// <summary>Lets the player choose the install folder (appending MNR unless the folder is already named so).</summary>
     void Browse_Click(object sender, RoutedEventArgs e)
     {
         var d = new Microsoft.Win32.OpenFolderDialog { Title = "Install folder (about 17 GB)" };
@@ -70,6 +75,7 @@ public partial class UpdatePage : UserControl, IRefresh
     /// <summary>Starts a check, as the button does (the sidebar's "Update available" notice).</summary>
     public void CheckNow() { if (cts == null) Check_Click(this, new RoutedEventArgs()); }
 
+    /// <summary>Fetches the latest release and compares it with the installed files, enabling Apply when something is missing.</summary>
     async void Check_Click(object sender, RoutedEventArgs e)
     {
         if (FolderChanged()) return;
@@ -98,6 +104,7 @@ public partial class UpdatePage : UserControl, IRefresh
         finally { Busy(false); }
     }
 
+    /// <summary>Backs up saves, downloads and applies the planned update, then restarts the launcher or rebuilds the game.</summary>
     async void Apply_Click(object sender, RoutedEventArgs e)
     {
         var a = SaveAccount();
@@ -138,6 +145,7 @@ public partial class UpdatePage : UserControl, IRefresh
         finally { Busy(false); }
     }
 
+    /// <summary>Cancels the running check or update.</summary>
     void Cancel_Click(object sender, RoutedEventArgs e) => cts?.Cancel();
 
     /// <summary>Installs the player's own DLC packages (PkgInstaller): their license files go into the game's folder.</summary>
@@ -164,6 +172,7 @@ public partial class UpdatePage : UserControl, IRefresh
         PkgStatus.Text = string.Join("\n", lines);
     }
 
+    /// <summary>Switches the page between busy (progress bar and Cancel shown) and idle states.</summary>
     void Busy(bool on)
     {
         if (on) cts = new CancellationTokenSource(); else { cts?.Dispose(); cts = null; }

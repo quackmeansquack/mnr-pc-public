@@ -21,16 +21,24 @@ public abstract class SettingsSection : UserControl, IRefresh
     protected static Settings S => MainWindow.Settings;
     protected bool Loading;
 
+    /// <summary>Creates the scrolling settings body.</summary>
     protected SettingsSection() { Content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = Body }; }
 
+    /// <summary>Rebuilds the tab's cards from the current settings.</summary>
     public void Refresh() { Loading = true; Body.Children.Clear(); Build(); Loading = false; }
+    /// <summary>Adds the tab's cards (implemented by each section).</summary>
     protected abstract void Build();
+    /// <summary>Saves the settings unless the page is still being built.</summary>
     protected void Save() { if (!Loading) S.Save(); }
 
+    /// <summary>A secondary-style text block.</summary>
     protected TextBlock Sub(string text) => new() { Text = text, Style = (Style)FindResource("Sub") };
+    /// <summary>Adds an upper-case section heading.</summary>
     protected void Heading(string text) => Body.Children.Add(new TextBlock { Text = text.ToUpperInvariant(), Style = (Style)FindResource("H2") });
+    /// <summary>Adds an explanatory note under the previous card.</summary>
     protected void Note(string text) => Body.Children.Add(new TextBlock { Text = text, Style = (Style)FindResource("Sub"), Margin = new Thickness(2, 0, 0, 10) });
 
+    /// <summary>Adds a card with a title, optional description, a control and optional content below it.</summary>
     protected Border Card(string title, string? description, UIElement? control, UIElement? below = null)
     {
         var g = new Grid();
@@ -47,12 +55,14 @@ public abstract class SettingsSection : UserControl, IRefresh
         return b;
     }
 
+    /// <summary>A toggle switch that stores its value and saves on click.</summary>
     protected ToggleSwitch Toggle(bool value, Action<bool> set)
     {
         var t = new ToggleSwitch { IsChecked = value };
         t.Click += (_, _) => { set(t.IsChecked == true); Save(); };
         return t;
     }
+    /// <summary>A combo box over (label, value) items that stores the selected value and saves.</summary>
     protected ComboBox Choice<T>(IEnumerable<(string label, T value)> items, T current, Action<T> set, double width = 220)
     {
         var list = items.ToList();
@@ -62,12 +72,14 @@ public abstract class SettingsSection : UserControl, IRefresh
         c.SelectionChanged += (_, _) => { if (c.SelectedIndex >= 0) { set(list[c.SelectedIndex].value); Save(); } };
         return c;
     }
+    /// <summary>A text box that stores its trimmed text on focus loss and saves.</summary>
     protected TextBox Text(string value, Action<string> set, double width = 300)
     {
         var t = new TextBox { Text = value, Width = width };
         t.LostFocus += (_, _) => { set(t.Text.Trim()); Save(); };
         return t;
     }
+    /// <summary>A button that runs click; primary styles it as the accent action.</summary>
     protected static Button Btn(string text, Action click, bool primary = false)
     {
         var b = new Button { Content = text };
@@ -75,6 +87,7 @@ public abstract class SettingsSection : UserControl, IRefresh
         b.Click += (_, _) => click();
         return b;
     }
+    /// <summary>Lays the given elements out horizontally.</summary>
     protected static StackPanel Row(params UIElement[] items)
     {
         var p = new StackPanel { Orientation = Orientation.Horizontal };
@@ -83,8 +96,10 @@ public abstract class SettingsSection : UserControl, IRefresh
     }
 }
 
+/// <summary>Game tab: frame rate, FPS display, controller, track unlock and remix permission.</summary>
 public class GameSettings : SettingsSection
 {
+    /// <summary>Adds the game cards.</summary>
     protected override void Build()
     {
         Heading("Game");
@@ -100,8 +115,10 @@ public class GameSettings : SettingsSection
     }
 }
 
+/// <summary>Graphics tab: resolution, FXAA and anisotropic filtering.</summary>
 public class GraphicsSettings : SettingsSection
 {
+    /// <summary>Adds the graphics cards.</summary>
     protected override void Build()
     {
         Heading("Graphics");
@@ -114,8 +131,10 @@ public class GraphicsSettings : SettingsSection
     }
 }
 
+/// <summary>Audio and voice tab: mute, volume, voice codec, microphone and push-to-talk.</summary>
 public class AudioSettings : SettingsSection
 {
+    /// <summary>Adds the sound and voice cards.</summary>
     protected override void Build()
     {
         Heading("Sound");
@@ -151,6 +170,7 @@ public class AudioSettings : SettingsSection
         Card("Microphone boost", "How loud others hear you. 1.5x suits most microphones.", Row(boost, boostText));
     }
 
+    /// <summary>Copies the chosen PS3UPDAT.PUP into the install root and refreshes the tab.</summary>
     void PickUpdateFile()
     {
         var dlg = new Microsoft.Win32.OpenFileDialog { Title = "The PS3 system update (PS3UPDAT.PUP)", Filter = "PS3 update|PS3UPDAT.PUP|All files|*.*" };
@@ -161,6 +181,7 @@ public class AudioSettings : SettingsSection
     }
 }
 
+/// <summary>Online tab: online switch, server choice, race port and creation browser site.</summary>
 public class OnlineSettings : SettingsSection
 {
 #if PUBLIC_EDITION
@@ -169,6 +190,7 @@ public class OnlineSettings : SettingsSection
     public static readonly (string name, string address)[] Servers = { ("MNR PC", "mnr.quackcraft.net"), ("MNR Revival", "45.32.179.33") };
 #endif
 
+    /// <summary>Adds the online cards.</summary>
     protected override void Build()
     {
         Heading("Online");
@@ -204,8 +226,10 @@ public class OnlineSettings : SettingsSection
     }
 }
 
+/// <summary>Appearance tab: the theme cards.</summary>
 public class AppearanceSettings : SettingsSection
 {
+    /// <summary>Adds the theme cards.</summary>
     protected override void Build()
     {
         Heading("Theme");
@@ -233,8 +257,10 @@ public class AppearanceSettings : SettingsSection
     }
 }
 
+/// <summary>Advanced tab: log options, bug report and extra environment switches.</summary>
 public class AdvancedSettings : SettingsSection
 {
+    /// <summary>Adds the logging, bug report and environment cards.</summary>
     protected override void Build()
     {
         Heading("Logs and bug reports");

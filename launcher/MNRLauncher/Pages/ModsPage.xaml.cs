@@ -7,11 +7,14 @@ using MNRLauncher.Core;
 
 namespace MNRLauncher.Pages;
 
+/// <summary>Mods page: imports, orders, enables and deletes mods.</summary>
 public partial class ModsPage : UserControl, IRefresh
 {
     List<Mod> mods = new();
+    /// <summary>Creates the mods page.</summary>
     public ModsPage() { InitializeComponent(); }
 
+    /// <summary>Rescans the mods folder and repopulates the list, keeping the previous selection.</summary>
     public void Refresh()
     {
         var keep = (List.SelectedItem as Mod)?.Id;

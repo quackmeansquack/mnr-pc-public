@@ -6,6 +6,7 @@ using MNRLauncher.Pages;
 
 namespace MNRLauncher;
 
+/// <summary>The launcher's main window: sidebar navigation, shared settings, and the update notice.</summary>
 public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 {
     public static Settings Settings { get; private set; } = new();
