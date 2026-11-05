@@ -22,8 +22,8 @@ static SRWLOCK lock = SRWLOCK_INIT;
 /* ---- waveOut stream: 16 buffers of 4 blocks (1024 stereo frames, ~21 ms) */
 #define NBUF 16
 #define BUF_FRAMES (4 * BLOCK)
-#define SIL_BUF 8        /* silence buffers queued ahead of the game's audio: an ~170 ms cushion */
-#define LATE_BLOCKS 24   /* how long a block the game is filling may be waited for (~128 ms, the cushion's limit) */
+#define SIL_BUF 12       /* silence buffers queued ahead of the game's audio: an ~256 ms cushion */
+#define LATE_BLOCKS 36   /* how long a block the game is filling may be waited for (~192 ms, the cushion's limit) */
 static HWAVEOUT wo;
 static WAVEHDR hdr[NBUF];
 static int16_t pcm[NBUF][BUF_FRAMES * 2];
@@ -224,8 +224,10 @@ static DWORD WINAPI audio_thread(void *arg) {
         }
         QueryPerformanceCounter(&t);
         uint64_t due = (uint64_t)(t.QuadPart - t0.QuadPart) * 48000 / BLOCK / f.QuadPart;
-        if (due > done + 32) done = due - 32;   /* after a long stall don't try to catch up forever */
-        while (done < due) {
+        /* Catch up at most a few blocks per pass so a long stall is spread over several ms instead of
+         * being skipped silently (which sounded like the audio cutting out). Missed blocks still decay. */
+        int produced = 0;
+        while (done < due && produced < 8) {
             /* A port the game is filling gets a few periods' grace for a block it hasn't refilled yet (it
              * falls behind for a moment), then the block plays as it is. The output cushion above covers the
              * wait, so waiting is better than skipping the block. */
@@ -267,6 +269,7 @@ static DWORD WINAPI audio_thread(void *arg) {
             }
             wait_from = 0;
             done++;
+            produced++;
             float lr[BLOCK * 2] = {0};
             int any = 0;
             AcquireSRWLockShared(&lock);
