@@ -14,7 +14,7 @@
 
 #define MAX_PORTS 8
 #define BLOCK 256
-typedef struct { int open, started; uint32_t addr, nch, nblk, size, index_addr; uint64_t blk; float level; int filling, gapped; float last_l, last_r; } port_t;
+typedef struct { int open, started; uint32_t addr, nch, nblk, size, index_addr; uint64_t blk; float level; int filling, gapped; float last_l, last_r; float peak; int zrun, zgame; uint64_t zfrom; LONGLONG zt0; } port_t;
 static port_t ports[MAX_PORTS];
 static uint32_t index_area;   /* guest: 8 x u64 read indices */
 static SRWLOCK lock = SRWLOCK_INIT;
@@ -145,6 +145,28 @@ static void blk_clear(port_t *p, uint64_t b) {
     mem_zero(blk_base(p, b), p->nch * BLOCK * 4);
     st_u32(blk_base(p, b), TAG); st_u32(blk_last(p, b), TAG);
 }
+/* Silence right after sound: blocks the game refilled with zeros, or blocks it hadn't refilled that played as
+ * silence. Each run is logged once it ends, with its place in the mix (the same position as in MNR_AUDIO_WAV's
+ * file), to match a heard skip to what the game was doing. */
+static int portlog;
+static uint64_t mix_blocks;   /* blocks mixed so far: the MNR_AUDIO_WAV position */
+static void silence_check(port_t *p, int st, float peak) {
+    if (peak == 0.0f) {   /* (untouched blocks come here with 0) */
+        if (p->zrun || p->peak > 0.01f) {
+            if (!p->zrun++) { LARGE_INTEGER t; QueryPerformanceCounter(&t); p->zfrom = mix_blocks; p->zt0 = t.QuadPart; p->zgame = 0; }
+            if (st != 1) p->zgame++;
+        }
+    } else {
+        if (p->zrun) {
+            LARGE_INTEGER t; QueryPerformanceCounter(&t);
+            printf("[audio] port %d: %d ms of silence after sound at %.2f s of the mix: %d blocks the game wrote as zeros, %d it hadn't written (%u ch, peak before %.2f)\n",
+                   (int)(p - ports), p->zrun * BLOCK * 1000 / 48000, (double)p->zfrom * BLOCK / 48000, p->zgame, p->zrun - p->zgame, p->nch, p->peak);
+            tl_rec("audio: game wrote silence", p->zt0, t.QuadPart, 0, (uint32_t)p->zrun);
+            p->zrun = 0;
+        }
+        p->peak = peak;
+    }
+}
 static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of port p into lr[256 * 2] */
     uint32_t base = blk_base(p, b);
     int st = blk_state(p, b);
@@ -154,15 +176,17 @@ static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of po
         p->last_l *= expf(-(float)BLOCK / 32.0f);
         p->last_r *= expf(-(float)BLOCK / 32.0f);
         p->gapped = 1;   /* the block after the gap fades in: resuming at a random waveform phase clicks */
+        silence_check(p, st, 0.0f);
         return;
     }
     if (ld_u32(base) == TAG) st_u32(base, 0);
     if (ld_u32(blk_last(p, b)) == TAG) st_u32(blk_last(p, b), 0);
     int fadein = p->gapped ? 64 : 0;
     p->gapped = 0;
+    float peak = 0;
     for (int s = 0; s < BLOCK; s++) {
         float ch[8] = {0};
-        for (uint32_t c = 0; c < p->nch && c < 8; c++) ch[c] = ld_f32(base + (s * p->nch + c) * 4);
+        for (uint32_t c = 0; c < p->nch && c < 8; c++) { ch[c] = ld_f32(base + (s * p->nch + c) * 4); if (fabsf(ch[c]) > peak) peak = fabsf(ch[c]); }
         float l, r;
         if (p->nch >= 6) {   /* L R C LFE Ls Rs [Lb Rb] */
             l = ch[0] + 0.707f * ch[2] + 0.707f * ch[4] + 0.5f * ch[6];
@@ -173,6 +197,7 @@ static void mix_block(port_t *p, uint64_t b, float *lr) {   /* add block b of po
         lr[2 * s] += l * p->level; lr[2 * s + 1] += r * p->level;
         p->last_l = l * p->level; p->last_r = r * p->level;
     }
+    silence_check(p, st, peak);
 }
 
 /* MNR_AUDIO_WAV=<file>: also write the mix to a 16-bit stereo WAV (checking sound without speakers) */
@@ -195,7 +220,6 @@ static void wav_frames(const float *lr, int n) {
     }
 }
 
-static int portlog;
 static DWORD WINAPI audio_thread(void *arg) {
     portlog = getenv("MNR_AUDIO_PORTLOG") != NULL;
     LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
@@ -254,12 +278,22 @@ static DWORD WINAPI audio_thread(void *arg) {
                 }
                 uint64_t waited = (uint64_t)(t.QuadPart - wait_from) * 48000 / f.QuadPart;
                 if (waited > (uint64_t)st_maxwait) st_maxwait = (long)waited;
+                /* MNR_AUDIO_STALL_LOG=1 (debug): on a long wait, log what every game thread is doing (the one that
+                 * fills the audio is stuck somewhere) */
+                static int state_logs, stall_log = -1; static LONGLONG logged_wait;
+                if (stall_log < 0) stall_log = getenv("MNR_AUDIO_STALL_LOG") != NULL;
+                if (stall_log && waited >= 40 * 48 && logged_wait != wait_from && state_logs < 20) {
+                    logged_wait = wait_from; state_logs++;
+                    printf("[audio] the game's audio is %d ms late at %.2f s of the mix; game threads now:\n", (int)(waited / 48), (double)mix_blocks * BLOCK / 48000);
+                    mnr_print_thread_states(stdout);
+                }
                 if (waited < wait_limit) break;   /* look again next ms */
                 uint64_t stall = (uint64_t)(t.QuadPart - stall_from) * 48000 / f.QuadPart;
                 if (stall > (uint64_t)st_maxstall) st_maxstall = (long)stall;
                 st_missed++;
+                tl_rec("audio: gave up on a late block", wait_from, t.QuadPart, 0, (uint32_t)done);
             } else {
-                if (wait_from) st_late++;
+                if (wait_from) { st_late++; QueryPerformanceCounter(&t); tl_rec("audio: late block arrived", wait_from, t.QuadPart, 0, (uint32_t)done); }
                 if (stall_from) {
                     QueryPerformanceCounter(&t);
                     uint64_t stall = (uint64_t)(t.QuadPart - stall_from) * 48000 / f.QuadPart;
@@ -290,6 +324,7 @@ static DWORD WINAPI audio_thread(void *arg) {
                 any = 1;
             }
             ReleaseSRWLockShared(&lock);
+            if (any) mix_blocks++;
             if (any) voice_mix(lr, BLOCK);
             if (any && !muted) out_frames(lr, BLOCK);
             if (any) wav_frames(lr, BLOCK);

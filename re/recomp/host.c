@@ -467,18 +467,51 @@ void tl_rec(const char *what, LONGLONG t0, LONGLONG t1, uint32_t lr, uint32_t ar
     long i = InterlockedIncrement(&tl_n) - 1; if (i >= TL_MAX) return;
     tl_ev[i].t0 = t0; tl_ev[i].t1 = t1; tl_ev[i].th = my_treg && my_treg->name ? my_treg->name : "?"; tl_ev[i].what = what; tl_ev[i].lr = lr; tl_ev[i].arg = arg;
 }
-void tl_mark(const char *what, uint32_t arg) { LARGE_INTEGER t; QueryPerformanceCounter(&t); LONGLONG s = tl_us50; tl_us50 = 0; tl_rec(what, t.QuadPart, t.QuadPart, 0, arg); tl_us50 = s; }
+void tl_mark(const char *what, uint32_t arg) {   /* an instant (recorded whatever its length; leaves the threshold alone for other threads) */
+    if (tl_state != 1) return;
+    LARGE_INTEGER t; QueryPerformanceCounter(&t);
+    long i = InterlockedIncrement(&tl_n) - 1; if (i >= TL_MAX) return;
+    tl_ev[i].t0 = tl_ev[i].t1 = t.QuadPart; tl_ev[i].th = my_treg && my_treg->name ? my_treg->name : "?"; tl_ev[i].what = what; tl_ev[i].lr = 0; tl_ev[i].arg = arg;
+}
 static DWORD WINAPI tl_thread(void *p) {
     while (!race_began) Sleep(100);
     Sleep((DWORD)(uintptr_t)p * 1000);
     LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); tl_us50 = f.QuadPart / 20000;
     tl_ev = calloc(TL_MAX, sizeof *tl_ev); QueryPerformanceCounter(&t0); tl_state = 1;
-    Sleep(3000); tl_state = 2; Sleep(50);
+    { const char *e = strchr(getenv("MNR_TIMELINE"), ','); Sleep(e ? (DWORD)atoi(e + 1) * 1000 : 3000); }   /* MNR_TIMELINE=<s>,<length s> */
+    tl_state = 2; Sleep(50);
     FILE *o = fopen("mnr_timeline.txt", "w"); if (!o) return 0;
     long n = tl_n < TL_MAX ? tl_n : TL_MAX;
     for (long i = 0; i < n; i++) { tl_ev_t *e = &tl_ev[i];
         fprintf(o, "%.0f %.0f %s|%s|0x%08x|0x%x\n", (e->t0 - t0.QuadPart) * 1e6 / f.QuadPart, (e->t1 - t0.QuadPart) * 1e6 / f.QuadPart, e->th, e->what, e->lr, e->arg); }
     fclose(o); printf("[timeline] %ld events written to mnr_timeline.txt\n", n);
+    return 0;
+}
+/* MNR_SPU_SAMPLE=<s> (debug): once the race began, sample the SPURS job chain thread's host instruction pointer
+ * every ms for <s> seconds and write mnr_samples.txt (mnr.exe offset, count; llvm-addr2line -i -e mnr.exe
+ * 0x140000000+offset names the spu_p_*.c line, one line per SPU instruction) */
+static DWORD WINAPI spu_sample_thread(void *p) {
+    while (!race_began) Sleep(100);
+    HANDLE h = NULL;
+    for (long t = 0; t < treg_count && t < 128; t++) if (tregs[t].name && !strcmp(tregs[t].name, "SPURS job chain")) h = tregs[t].h;
+    if (!h) return 0;
+    enum { N = 1 << 16 }; static uint64_t key[N]; static uint32_t cnt[N];
+    uint64_t base = (uint64_t)GetModuleHandleA(NULL); long total = 0;
+    timeBeginPeriod(1);
+    for (DWORD end = GetTickCount() + (DWORD)(uintptr_t)p * 1000; GetTickCount() < end; Sleep(1)) {
+        if (SuspendThread(h) == (DWORD)-1) break;
+        CONTEXT cx; cx.ContextFlags = CONTEXT_CONTROL;
+        if (GetThreadContext(h, &cx)) {
+            uint64_t r = cx.Rip - base; uint32_t i = (uint32_t)(r * 0x9E3779B97F4A7C15ull >> 48);
+            while (key[i] && key[i] != r + 1) i = (i + 1) & (N - 1);
+            key[i] = r + 1; cnt[i]++; total++;
+        }
+        ResumeThread(h);
+    }
+    timeEndPeriod(1);
+    FILE *o = fopen("mnr_samples.txt", "w"); if (!o) return 0;
+    for (int i = 0; i < N; i++) if (key[i]) fprintf(o, "0x%llx %u\n", (unsigned long long)(key[i] - 1), cnt[i]);
+    fclose(o); printf("[sample] %ld samples of the SPURS job chain written to mnr_samples.txt\n", total);
     return 0;
 }
 static void gcm_cp_report(void);
@@ -497,6 +530,15 @@ void mnr_dump_threads(FILE *o) {
         fprintf(o, "\n");
     }
     fflush(o);
+}
+/* Short form of the dump for the log (the audio thread calls it when the game's audio runs late): what each
+ * guest thread is in right now. Read without stopping the threads, so a line can be a moment out of date. */
+void mnr_print_thread_states(FILE *o) {
+    for (long t = 0; t < treg_count && t < 128; t++) {
+        treg_t *r = &tregs[t]; const char *h = r->hle;
+        if (h) fprintf(o, "    %s: in %s (from 0x%08x)\n", r->name ? r->name : "?", h, r->hle_lr);
+        else fprintf(o, "    %s: running (lr 0x%08llx)\n", r->name ? r->name : "?", (unsigned long long)r->ctx->lr);
+    }
 }
 static DWORD WINAPI dump_to_file(void *p) {
     (void)p;
@@ -3083,6 +3125,7 @@ static void spurs_jc_guard_init(ctx_t *c) {   /* (chain, guard, notifyCount, req
 }
 static void spurs_jc_guard_notify(ctx_t *c) {   /* (guard) */
     uint32_t g = ARG32(0);
+    tl_mark("jobchain: guard notify", (uint32_t)c->lr);
     volatile LONG *n = (volatile LONG *)gp(g);   /* big-endian in guest memory: update under the chain's view */
     for (;;) {
         LONG old = *n; uint32_t v = __builtin_bswap32((uint32_t)old);
@@ -3101,7 +3144,9 @@ int spu_run_job(uint32_t job, uint32_t desc_size);   /* spu.c */
 static void jobchain_job(jobchain_t *j, uint32_t job, uint32_t size) {
     spu_async_start();
     if (async_workers && j->contention > 1) { j->launched++; spu_async_push(0, NULL, job, size, &j->done); return; }
+    LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
     int r = spu_run_job(job, size);
+    QueryPerformanceCounter(&t1); tl_rec("jobchain: job", t0.QuadPart, t1.QuadPart, 0, (uint32_t)ld_u64(job));   /* MNR_TIMELINE: arg = binary */
     if (r && jobchain_log) printf("[jobchain] job 0x%08x failed (%d)\n", job, r);
 }
 static void jobchain_drain(jobchain_t *j) {   /* spin a little, then sleep until a worker finishes one (spinning took a core) */
@@ -3114,6 +3159,12 @@ static void jobchain_drain(jobchain_t *j) {   /* spin a little, then sleep until
 static DWORD WINAPI jobchain_thread(void *p) {
     jobchain_t *j = p;
     static ctx_t jc_ctx; thread_register(&jc_ctx, "SPURS job chain");
+    /* MNR's only job chain is Wwise's audio renderer (created with the first audio port; its jobs fill the
+     * ports). On the PS3 it had an SPU to itself; here it shares the cores with a dozen busy threads at race
+     * starts, fell behind, and the sound cut out (once the renderer even halted on a descriptor the game had
+     * already reused, and the game froze). MNR_JOBCHAIN_HIGH_PRIO=1 runs it above the game's threads (off: in
+     * tests it helped one race and not the next; the chain is short of CPU time, not of priority). */
+    if (getenv("MNR_JOBCHAIN_HIGH_PRIO")) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     while (j->running) {
         uint64_t cmd = ld_u64(j->pc);
         uint32_t op = (uint32_t)cmd & 7, ea = (uint32_t)cmd & ~0xFu;
@@ -3137,7 +3188,9 @@ static DWORD WINAPI jobchain_thread(void *p) {
             switch (((uint32_t)cmd >> 3) & 15) {
             case 1: {   /* GUARD: wait until the PPU has notified it often enough */
                 uint32_t g = (uint32_t)cmd & ~0x7Fu;
+                LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
                 while (j->running && ld_u32(g)) WaitForSingleObject(j->wake, 5);
+                QueryPerformanceCounter(&t1); tl_rec("jobchain: guard wait", t0.QuadPart, t1.QuadPart, 0, g);
                 if (ld_u32(g + 8)) st_u32(g, ld_u32(g + 4));
                 j->pc += 8; break;
             }
@@ -4594,6 +4647,7 @@ int main(int argc, char **argv) {
     hle_lenient = getenv("MNR_HLE_STRICT") == NULL;   /* unimplemented imports return 0 and are logged; MNR_HLE_STRICT=1 stops at the first */
     fs_log = getenv("MNR_FS_LOG") != NULL;
     syscall_log = getenv("MNR_SYSCALL_LOG") != NULL;
+    if (getenv("MNR_SPU_SAMPLE")) CreateThread(NULL, 0, spu_sample_thread, (void *)(uintptr_t)atoi(getenv("MNR_SPU_SAMPLE")), 0, NULL);
     if (getenv("MNR_TIMELINE")) CreateThread(NULL, 0, tl_thread, (void *)(uintptr_t)atoi(getenv("MNR_TIMELINE")), 0, NULL);
     if (getenv("MNR_PROFILE")) CreateThread(NULL, 0, profiler_thread, (void *)(uintptr_t)atoi(getenv("MNR_PROFILE")), 0, NULL);
 #ifdef MNR_PGO_GEN

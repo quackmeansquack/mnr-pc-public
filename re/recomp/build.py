@@ -6,6 +6,7 @@ Object files are reused when newer than their source and runtime.h.
 """
 import argparse
 import concurrent.futures
+import hashlib
 import os
 import re
 import shutil
@@ -86,9 +87,15 @@ def main():
         env = dict(os.environ, MNR_HOOKS=os.path.join(HERE, g['hooks']))
         subprocess.run([sys.executable, '-I', os.path.join(HERE, 'ppu2c.py'), g['elf'], g['funcs'], OUT, '10000', g['text_hi']],
                        check=True, env=env)
-    if g['spu'] and (args.spu or not os.path.exists(os.path.join(OUT, 'spu_progs.c'))):   # SPU programs compiled ahead of time
+    # SPU programs compiled ahead of time: again whenever spu2c.py changes (its output and table layout change with it,
+    # and the launcher's update builds don't pass --spu)
+    spu_stamp = os.path.join(OUT, 'spu2c.stamp')
+    with open(os.path.join(HERE, 'spu2c.py'), 'rb') as f: spu_hash = hashlib.sha256(f.read()).hexdigest()
+    spu_old = open(spu_stamp).read().strip() if os.path.exists(spu_stamp) else ''
+    if g['spu'] and (args.spu or spu_old != spu_hash or not os.path.exists(os.path.join(OUT, 'spu_progs.c'))):
         print('[stage] translating the SPU programs', flush=True)
         subprocess.run([sys.executable, '-I', os.path.join(HERE, 'spu2c.py'), g['elf'], OUT, *g['spu']], check=True)
+        with open(spu_stamp, 'w') as f: f.write(spu_hash)
     shutil.copy2(os.path.join(HERE, g['header']), os.path.join(OUT, 'game.h'))
     global PGO
     if args.pgo_gen: PGO = ['-fprofile-generate']

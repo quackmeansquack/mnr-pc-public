@@ -18,6 +18,8 @@ void career_unlock_tracks(uint32_t mgr);
 void gcm_flip_presented(void);
 void perf_frame(void);
 void log_state(FILE *f);
+void mnr_print_thread_states(FILE *o);   /* one line per guest thread: the call it waits in, or running */
+void tl_rec(const char *what, LONGLONG t0, LONGLONG t1, uint32_t lr, uint32_t arg);   /* MNR_TIMELINE (debug) */
 
 extern volatile int gcm_frame_ticked;
 extern volatile int race_began, race_track_opened;

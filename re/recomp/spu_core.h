@@ -69,23 +69,23 @@ static inline uint32_t f2w(float f) {
     else if (e == 0) u &= 0x80000000u;
     return u;
 }
-/* the same, four lanes at once (the per-lane branches were most of the SPU float work in race profiles) */
+/* the same, four lanes at once (the per-lane branches were most of the SPU float work in race profiles). On the
+ * magnitude bits, as integers: min with FLT_MAX turns exponent 255 into +-FLT_MAX, a compare clears denormals;
+ * the sign goes back on after. Plain single-uop SSE (the blendv versions were a quarter of the audio mixer's time). */
 static inline __m128 qf4(const q_t *q) {
     __m128i u; memcpy(&u, q, 16);
-    const __m128i em = _mm_set1_epi32(0x7F800000), sm = _mm_set1_epi32((int)0x80000000u);
-    __m128i e = _mm_and_si128(u, em), sg = _mm_and_si128(u, sm);
-    u = _mm_blendv_epi8(u, _mm_or_si128(sg, _mm_set1_epi32(0x7F7FFFFF)), _mm_cmpeq_epi32(e, em));
-    u = _mm_blendv_epi8(u, sg, _mm_cmpeq_epi32(e, _mm_setzero_si128()));
-    return _mm_castsi128_ps(u);
+    const __m128i sm = _mm_set1_epi32((int)0x80000000u);
+    __m128i m = _mm_min_epu32(_mm_andnot_si128(sm, u), _mm_set1_epi32(0x7F7FFFFF));
+    m = _mm_and_si128(m, _mm_cmpgt_epi32(m, _mm_set1_epi32(0x007FFFFF)));
+    return _mm_castsi128_ps(_mm_or_si128(m, _mm_and_si128(u, sm)));
 }
-static inline void f2w4(q_t *out, __m128 f) {
+static inline void f2w4(q_t *out, __m128 f) {   /* Inf -> +-FLT_MAX, NaN -> 0, denormals -> +-0 */
     __m128i u = _mm_castps_si128(f);
-    const __m128i em = _mm_set1_epi32(0x7F800000), sm = _mm_set1_epi32((int)0x80000000u), z = _mm_setzero_si128();
-    __m128i e = _mm_and_si128(u, em), sg = _mm_and_si128(u, sm), infnan = _mm_cmpeq_epi32(e, em);
-    __m128i nan = _mm_andnot_si128(_mm_cmpeq_epi32(_mm_and_si128(u, _mm_set1_epi32(0x007FFFFF)), z), infnan);
-    u = _mm_blendv_epi8(u, _mm_or_si128(sg, _mm_set1_epi32(0x7F7FFFFF)), infnan);
-    u = _mm_blendv_epi8(u, z, nan);
-    u = _mm_blendv_epi8(u, sg, _mm_cmpeq_epi32(e, z));
+    const __m128i sm = _mm_set1_epi32((int)0x80000000u);
+    __m128i m = _mm_andnot_si128(sm, u), nan = _mm_cmpgt_epi32(m, _mm_set1_epi32(0x7F800000));
+    m = _mm_min_epu32(m, _mm_set1_epi32(0x7F7FFFFF));
+    m = _mm_and_si128(m, _mm_cmpgt_epi32(m, _mm_set1_epi32(0x007FFFFF)));
+    u = _mm_andnot_si128(nan, _mm_or_si128(m, _mm_and_si128(u, sm)));
     memcpy(out, &u, 16);
 }
 static inline void m2w4(q_t *out, __m128 m) { memcpy(out, &m, 16); }
@@ -118,6 +118,14 @@ extern int spu_dma_log, spu_dma_log_n;   /* MNR_JOB_DMALOG: trace PUTs of SPU jo
 void spu_dma_trace(spu_t *s, uint32_t ea, uint32_t lsa, uint32_t size);
 extern volatile long spu_dma_count[4];
 extern __thread int spu_func_trace; void spu_func_dma(spu_t *s, uint32_t op, uint32_t ea, uint32_t lsa, uint32_t size);   /* GET, PUT, list, atomic: debug counters (spu.c) */
+/* MNR_SPU_VERIFY (spu.c): each compiled program also runs on the interpreter first. spu_vmode 1 = that shadow run:
+ * stores to guest memory and events are only recorded (spu_vhash); 2 = the real run, recorded as well */
+extern __thread int spu_vmode; extern __thread uint64_t spu_vhash; extern __thread uint32_t spu_vn, spu_vch[32];   /* vch: channel writes */
+static inline void spu_vrec(uint32_t ea, const void *p, uint32_t n) {
+    const uint8_t *b = p; uint64_t h = spu_vhash ^ ea; h *= 0x100000001B3ull; h ^= n; h *= 0x100000001B3ull;
+    for (uint32_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001B3ull; }
+    spu_vhash = h; spu_vn++;
+}
 static void mfc_cmd(spu_t *s, uint32_t cmd) {
     uint32_t op = cmd & 0xFF;
     spu_dma_count[(op & 0xF0) == 0x40 ? 0 : (op & 0xF0) == 0x20 ? ((op & 4) ? 2 : 1) : 3]++;
@@ -128,7 +136,8 @@ static void mfc_cmd(spu_t *s, uint32_t cmd) {
         if (size) memcpy(s->ls + lsa, gp(ea), size);
         break;
     case 0x20: case 0x21: case 0x22:   /* PUT, PUTB, PUTF */
-        if (size && spu_guard_ok(s, op, ea, size)) memcpy(gp(ea), s->ls + lsa, size);
+        if (spu_vmode) spu_vrec(ea, s->ls + lsa, size);
+        if (spu_vmode != 1 && size && spu_guard_ok(s, op, ea, size)) memcpy(gp(ea), s->ls + lsa, size);
         if (spu_dma_log && spu_dma_log_n < 3000) spu_dma_trace(s, ea, lsa, size);
         break;
     case 0x44: case 0x45: case 0x46:   /* GETL: list at LS s->eal (8-byte elements {u32 size, u32 eal}) */
@@ -136,7 +145,8 @@ static void mfc_cmd(spu_t *s, uint32_t cmd) {
         uint32_t list = s->eal & LS_MASK & ~7u, n = size / 8;
         for (uint32_t i = 0; i < n; i++) {
             uint32_t ts = rd32(s, list + 8 * i) & 0x7FFF, el = rd32(s, list + 8 * i + 4);
-            if (op & 0x40) memcpy(s->ls + lsa, gp(el), ts); else if (spu_guard_ok(s, op, el, ts)) memcpy(gp(el), s->ls + lsa, ts);
+            if (op & 0x40) memcpy(s->ls + lsa, gp(el), ts);
+            else { if (spu_vmode) spu_vrec(el, s->ls + lsa, ts); if (spu_vmode != 1 && spu_guard_ok(s, op, el, ts)) memcpy(gp(el), s->ls + lsa, ts); }
             lsa = (lsa + ts + 15) & ~15u & LS_MASK;   /* elements start on 16-byte LS boundaries (low bits follow EA for small ones) */
             if (rd32(s, list + 8 * i) & 0x80000000u) break;   /* stall-and-notify: treat as end */
         }
@@ -153,6 +163,8 @@ static void mfc_cmd(spu_t *s, uint32_t cmd) {
                                          * updates the same lines with 4/8-byte compare-and-swap (stwcx/stdcx),
                                          * so only the 8-byte chunks this SPU changed are swapped in, each
                                          * against its reserved value; a failed swap undoes the earlier ones. */
+        if (spu_vmode) spu_vrec(ea & ~127u, s->ls + (lsa & ~127u), 128);
+        if (spu_vmode == 1) { s->rsv_ea = 0xFFFFFFFF; s->atomic_stat = 0; break; }   /* (shadow: assumed to succeed) */
         if (!spu_guard_ok(s, op, ea & ~127u, 128)) { s->rsv_ea = 0xFFFFFFFF; s->atomic_stat = 1; break; }
         spu_atomic_lock(1);
         uint64_t *mem = (uint64_t *)gp(ea & ~127u);
@@ -173,7 +185,8 @@ static void mfc_cmd(spu_t *s, uint32_t cmd) {
         break;
     }
     case 0xB0: case 0xB8:               /* PUTLLUC, PUTQLLUC */
-        if (!spu_guard_ok(s, op, ea & ~127u, 128)) { s->atomic_stat = 2; break; }
+        if (spu_vmode) spu_vrec(ea & ~127u, s->ls + (lsa & ~127u), 128);
+        if (spu_vmode == 1 || !spu_guard_ok(s, op, ea & ~127u, 128)) { s->atomic_stat = 2; break; }
         spu_atomic_lock(1);
         memcpy(gp(ea & ~127u), s->ls + (lsa & ~127u), 128);
         spu_atomic_lock(0);
@@ -193,6 +206,7 @@ static uint32_t rdch(spu_t *s, uint32_t ch) {
     }
 }
 static void wrch(spu_t *s, uint32_t ch, uint32_t v) {
+    if (spu_vmode) spu_vch[ch & 31]++;
     switch (ch) {
     case 16: s->lsa = v; break;
     case 17: s->eah = v; break;
@@ -202,7 +216,7 @@ static void wrch(spu_t *s, uint32_t ch, uint32_t v) {
     case 21: mfc_cmd(s, v); break;
     case 22: s->tag_mask = v; break;
     case 28: s->out_mbox = v; break;                                       /* SPU_WrOutMbox */
-    case 30: spurs_send_event(v >> 24, v & 0xFFFFFF, s->out_mbox); break;  /* SPU_WrOutIntrMbox: send_event(port, data0) */
+    case 30: { uint32_t e[2] = {v, s->out_mbox}; if (spu_vmode) spu_vrec(0xE0E0E0E0u, e, 8); if (spu_vmode != 1) spurs_send_event(v >> 24, v & 0xFFFFFF, s->out_mbox); break; }  /* SPU_WrOutIntrMbox: send_event(port, data0) */
     default: break;
     }
 }
@@ -276,7 +290,10 @@ static inline q_t gen_ctl(uint32_t t, int size) {   /* cbd/chd/cwd/cdd: insertio
     q_t r = {{0x10111213u, 0x14151617u, 0x18191A1Bu, 0x1C1D1E1Fu}};
     if (size == 1) { int sh = 24 - 8 * (int)(t & 3); r.w[(t >> 2) & 3] = (r.w[(t >> 2) & 3] & ~(0xFFu << sh)) | 0x03u << sh; }
     else if (size == 2) { int sh = (t & 2) ? 0 : 16; r.w[(t >> 2) & 3] = (r.w[(t >> 2) & 3] & ~(0xFFFFu << sh)) | 0x0203u << sh; }
-    else if (size == 4) r.w[(t >> 2) & 3] = 0x00010203u;
+    else if (size == 4) {   /* (cwd is hot in the audio mixer: a lane select, not a store at a variable index) */
+        __m128i sel = _mm_cmpeq_epi32(_mm_setr_epi32(0, 1, 2, 3), _mm_set1_epi32((int)((t >> 2) & 3))), v; memcpy(&v, &r, 16);
+        v = _mm_or_si128(_mm_andnot_si128(sel, v), _mm_and_si128(sel, _mm_set1_epi32(0x00010203))); memcpy(&r, &v, 16);
+    }
     else { r.w[(t >> 2) & 2] = 0x00010203u; r.w[((t >> 2) & 2) + 1] = 0x04050607u; }
     return r;
 }
@@ -297,9 +314,12 @@ static uint32_t cfltu(float f, int scale) {
 
 /* ------------------------------------------------------------------ interpreter */
 static int unknown_reported;
-static inline __attribute__((always_inline)) int spu_exec(spu_t *s, uint32_t w, uint32_t pc) {
+/* rf/pcp: the register file and next PC to work on. spu2c.py's blocks pass a local copy of just the registers a
+ * block touches: a vector store into local store may alias anything in *s, so through the state's own array every
+ * instruction reloaded and stored its registers in memory, while a block-local array stays in CPU registers. */
+static inline __attribute__((always_inline)) int spu_exec_r(spu_t *s, q_t *rf, uint32_t *pcp, uint32_t w, uint32_t pc) {
     uint32_t rt = w & 0x7F, ra = (w >> 7) & 0x7F, rb = (w >> 14) & 0x7F, rc;
-    q_t *T = &s->r[rt], A = s->r[ra], B = s->r[rb], R;
+    q_t *T = &rf[rt], A = rf[ra], B = rf[rb], R;
     uint32_t next = (pc + 4) & LS_MASK;
     uint32_t op4 = w >> 28, op7 = w >> 25, op8 = w >> 24, op9 = w >> 23, op10 = w >> 22, op11 = w >> 21;
     int32_t i10 = sext((w >> 14) & 0x3FF, 10), i16 = sext((w >> 7) & 0xFFFF, 16), i7 = sext((w >> 14) & 0x7F, 7);
@@ -307,14 +327,14 @@ static inline __attribute__((always_inline)) int spu_exec(spu_t *s, uint32_t w, 
 
     /* RRR */
     switch (op4) {
-    case 0x8: rc = rt; rt = (w >> 21) & 0x7F; { q_t C = s->r[rc]; for (int i = 0; i < 4; i++) R.w[i] = (C.w[i] & B.w[i]) | (~C.w[i] & A.w[i]); s->r[rt] = R; } goto done;   /* selb */
-    case 0xB: rc = rt; rt = (w >> 21) & 0x7F; s->r[rt] = shufb(A, B, s->r[rc]); goto done;
-    case 0xC: rc = rt; rt = (w >> 21) & 0x7F; { q_t C = s->r[rc]; for (int i = 0; i < 4; i++) R.w[i] = (uint32_t)((int32_t)(int16_t)A.w[i] * (int32_t)(int16_t)B.w[i] + (int32_t)C.w[i]); s->r[rt] = R; } goto done;   /* mpya */
+    case 0x8: rc = rt; rt = (w >> 21) & 0x7F; { q_t C = rf[rc]; for (int i = 0; i < 4; i++) R.w[i] = (C.w[i] & B.w[i]) | (~C.w[i] & A.w[i]); rf[rt] = R; } goto done;   /* selb */
+    case 0xB: rc = rt; rt = (w >> 21) & 0x7F; rf[rt] = shufb(A, B, rf[rc]); goto done;
+    case 0xC: rc = rt; rt = (w >> 21) & 0x7F; { q_t C = rf[rc]; for (int i = 0; i < 4; i++) R.w[i] = (uint32_t)((int32_t)(int16_t)A.w[i] * (int32_t)(int16_t)B.w[i] + (int32_t)C.w[i]); rf[rt] = R; } goto done;   /* mpya */
     case 0xD: case 0xE: case 0xF: {    /* fnms, fma, fms */
-        rc = rt; rt = (w >> 21) & 0x7F; q_t C = s->r[rc];
+        rc = rt; rt = (w >> 21) & 0x7F; q_t C = rf[rc];
         __m128 p = _mm_mul_ps(qf4(&A), qf4(&B)), cv = qf4(&C);
         f2w4(&R, op4 == 0xE ? _mm_add_ps(p, cv) : op4 == 0xF ? _mm_sub_ps(p, cv) : _mm_sub_ps(cv, p));
-        s->r[rt] = R; goto done;
+        rf[rt] = R; goto done;
     }
     }
     /* RI18 */
@@ -531,8 +551,9 @@ static inline __attribute__((always_inline)) int spu_exec(spu_t *s, uint32_t w, 
     s->stopped = 3;
     return 0;
 done:
-    s->pc = next;
+    *pcp = next;
     return 1;
 }
 
+static inline __attribute__((always_inline)) int spu_exec(spu_t *s, uint32_t w, uint32_t pc) { return spu_exec_r(s, s->r, &s->pc, w, pc); }
 static int step(spu_t *s) { return spu_exec(s, rd32(s, s->pc), s->pc); }

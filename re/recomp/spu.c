@@ -1,12 +1,48 @@
 /* SPU task runner: compiled programs (spu_progs.c) when available, the interpreter otherwise. */
 #include "spu_core.h"
-typedef struct { uint32_t elf; void (*fn)(spu_t *); } spu_prog_t;
+typedef struct { uint32_t elf; void (*fn)(spu_t *); uint32_t lo, hi; } spu_prog_t;   /* lo..hi: its instructions' LS addresses */
 extern const spu_prog_t spu_progs[]; extern const int spu_nprogs;
 #include <windows.h>
 #include "rsx.h"
 #include "spu.h"
 double spu_seconds; uint64_t spu_steps;
 int spu_run_task_inner(uint32_t elf, const uint32_t arg[4], uint64_t taskset_arg, uint64_t max_steps);
+__thread int spu_vmode; __thread uint64_t spu_vhash; __thread uint32_t spu_vn, spu_vch[32];
+/* Run a compiled program. MNR_SPU_VERIFY=1 (debug, slow): first interpret it on a copy of the state, with its
+ * stores to guest memory held back, then run the compiled code for real, and report any difference in the
+ * registers, local store, stores or events (the compiled code must do exactly what the interpreter does). */
+static void prog_call(const spu_prog_t *p, spu_t *s) {
+    static int verify = -1; if (verify < 0) { const char *e = getenv("MNR_SPU_VERIFY"); verify = e ? atoi(e) : 0; }
+    if (!verify) { p->fn(s); return; }
+    static __thread spu_t *c; if (!c) c = malloc(sizeof *c);
+    memcpy(c, s, sizeof *s);
+    spu_vmode = 1; spu_vhash = 0xCBF29CE484222325ull; spu_vn = 0; memset(spu_vch, 0, sizeof spu_vch);
+    uint64_t nsteps = 0;
+    for (uint64_t n = 0; !c->stopped && c->pc >= p->lo && c->pc < p->hi && n < 200000000; n++) { step(c); nsteps++; }
+    uint64_t h1 = spu_vhash; uint32_t n1 = spu_vn, ch1[32]; memcpy(ch1, spu_vch, sizeof ch1);
+    spu_vmode = 2; spu_vhash = 0xCBF29CE484222325ull; spu_vn = 0; memset(spu_vch, 0, sizeof spu_vch);
+    if (verify == 2) { for (uint64_t n = 0; !s->stopped && s->pc >= p->lo && s->pc < p->hi && n < 200000000; n++) step(s); }   /* =2: both on the interpreter (checks the check) */
+    else p->fn(s);
+    spu_vmode = 0;
+    static volatile long runs, bad;
+    static struct { uint32_t elf; volatile long runs, kind[6]; } per[64]; static const char *kinds[6] = {"pc/stop", "stores/events", "registers", "local store", "reads", ""};
+    int kind = s->pc != c->pc || s->stopped != c->stopped || s->stop_code != c->stop_code ? 0 : n1 != spu_vn || h1 != spu_vhash ? 1
+             : memcmp(s->r, c->r, sizeof s->r) ? 2 : memcmp(s->ls, c->ls, LS_SIZE) ? 3 : -1;
+    int pi = (int)(p - spu_progs) & 63; per[pi].elf = p->elf; InterlockedIncrement(&per[pi].runs);
+    if (kind >= 0) { InterlockedIncrement(&per[pi].kind[kind]); InterlockedIncrement(&bad); }
+    if (kind >= 0 && bad <= 40) {
+        int nr = 0, fr = -1; for (int k = 0; k < 128; k++) if (memcmp(&s->r[k], &c->r[k], 16)) { nr++; if (fr < 0) fr = k; }
+        int fl = -1, nl = 0; for (int k = 0; k < LS_SIZE; k += 16) if (memcmp(s->ls + k, c->ls + k, 16)) { nl++; if (fl < 0) fl = k; }
+        printf("[spu verify] program 0x%08x: %s differ (compiled/interpreted: pc %05x/%05x, stores %u/%u; %d registers differ, first r%d; %d LS lines, first 0x%x; %llu instructions)\n",
+               p->elf, kinds[kind], s->pc, c->pc, spu_vn, n1, nr, fr, nl, fl, (unsigned long long)nsteps);
+        printf("[spu verify]   channel writes compiled/interpreted:"); for (int k = 0; k < 32; k++) if (spu_vch[k] || ch1[k]) printf(" ch%d %u/%u", k, spu_vch[k], ch1[k]); printf("\n");
+    }
+    if (InterlockedIncrement(&runs) % 50000 == 0) {
+        printf("[spu verify] %ld runs checked, %ld differed:\n", runs, bad);
+        for (int i = 0; i < 64; i++) if (per[i].runs)
+            printf("[spu verify]   0x%08x: %ld runs; pc/stop %ld, stores %ld, registers %ld, local store %ld, reads %ld\n", per[i].elf, per[i].runs, per[i].kind[0], per[i].kind[1], per[i].kind[2], per[i].kind[3], per[i].kind[4]);
+    }
+}
 int spu_run_task(uint32_t elf, const uint32_t arg[4], uint64_t taskset_arg, uint64_t max_steps) {
     LARGE_INTEGER f, t0, t1; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
     int r = spu_run_task_inner(elf, arg, taskset_arg, max_steps);
@@ -145,7 +181,7 @@ static int spu_run_from(spu_t *s, uint32_t elf, uint32_t pc, uint64_t max_steps)
     if (noaot < 0) { const char *e = getenv("MNR_SPU_NOAOT"); noaot = e && *e == '1'; }
     for (int i = 0; i < spu_nprogs && !noaot; i++)
         if (spu_progs[i].elf == elf) {
-            spu_progs[i].fn(s);
+            prog_call(&spu_progs[i], s);
             if (!s->stopped && s->pc == 0) s->stopped = 1;
             return s->stopped == 1 ? 0 : -10 - s->stopped;
         }
@@ -269,7 +305,7 @@ int spu_run_task_inner(uint32_t elf, const uint32_t arg[4], uint64_t taskset_arg
     }
     for (int i = 0; i < spu_nprogs; i++)
         if (spu_progs[i].elf == elf) {
-            spu_progs[i].fn(s);
+            prog_call(&spu_progs[i], s);
             if (!s->stopped && s->pc == 0) s->stopped = 1;
             return s->stopped == 1 ? 0 : -10 - s->stopped;
         }
@@ -369,7 +405,7 @@ int spu_run_job(uint32_t job, uint32_t desc_size) {
     s->pc = JOB_BIN + 0x10;
     for (int i = 0; i < spu_nprogs; i++)
         if (spu_progs[i].elf == bin) {   /* compiled ahead of time (spu2c.py): runs until the PC leaves the binary */
-            spu_progs[i].fn(s);
+            prog_call(&spu_progs[i], s);
             if (!s->stopped && s->pc == 0) s->stopped = 1;
             break;
         }
