@@ -11,7 +11,8 @@ public class Binding
 {
     public string Control { get; set; } = "";
     public string Device { get; set; } = "";      // "046D:C262" (USB vendor:product)
-    public string Kind { get; set; } = "axis";    // axis, button, pov
+    public string Kind { get; set; } = "axis";    // axis, button, pov; key (the keyboard: Index is the Windows virtual key code)
+    public bool IsKey => Kind == "key";
     public int Index { get; set; }
     public bool Invert { get; set; }
     public double Deadzone { get; set; }
@@ -21,6 +22,7 @@ public class Binding
     /// <summary>Describes this binding in human-readable form, resolving the device name from the connected devices list.</summary>
     public string Describe(IEnumerable<Joystick.Device> devices)
     {
+        if (IsKey) return ControlMap.KeyName(Index);
         var dev = devices.FirstOrDefault(d => d.Key.Equals(Device, StringComparison.OrdinalIgnoreCase));
         var name = dev?.Name ?? Device + " (not connected)";
         var src = Kind switch
@@ -66,6 +68,54 @@ public static class ControlMap
         new("rx", "Right stick left/right", true, "Buttons"),
         new("ry", "Right stick up/down", true, "Buttons"),
     };
+
+    /// <summary>The controls the keyboard page lists, with the keys they have until the player changes them (the game's
+    /// built-in layout, host.c). The d-pad also steers and moves through menus.</summary>
+    public static readonly (string Id, string Name, int[] Keys)[] KeyControls =
+    {
+        ("left", "Steer left (D-pad left)", new[] { 0x25 }),
+        ("right", "Steer right (D-pad right)", new[] { 0x27 }),
+        ("up", "D-pad up", new[] { 0x26 }),
+        ("down", "D-pad down", new[] { 0x28 }),
+        ("r2", "Accelerate (R2)", new[] { (int)'2' }),
+        ("l2", "Brake / reverse (L2)", new[] { (int)'1' }),
+        ("cross", "Cross", new[] { (int)'Z', 0x20 }),
+        ("circle", "Circle", new[] { (int)'X' }),
+        ("square", "Square", new[] { (int)'A' }),
+        ("triangle", "Triangle", new[] { (int)'S' }),
+        ("l1", "L1", new[] { (int)'Q' }),
+        ("r1", "R1", new[] { (int)'W' }),
+        ("start", "Start", new[] { 0x0D }),
+        ("select", "Select", new[] { 0x08 }),
+        ("l3", "L3 (left stick click)", System.Array.Empty<int>()),
+        ("r3", "R3 (players and friends list)", System.Array.Empty<int>()),
+        ("rx-", "Right stick left", System.Array.Empty<int>()),
+        ("rx+", "Right stick right", System.Array.Empty<int>()),
+        ("ry-", "Right stick up", System.Array.Empty<int>()),
+        ("ry+", "Right stick down", System.Array.Empty<int>()),
+    };
+
+    /// <summary>The keyboard bindings a new setup starts with.</summary>
+    public static List<Binding> DefaultKeys() =>
+        KeyControls.SelectMany(c => c.Keys.Select(k => new Binding { Control = c.Id, Device = "keyboard", Kind = "key", Index = k })).ToList();
+
+    /// <summary>A key's name from its Windows virtual key code.</summary>
+    public static string KeyName(int vk)
+    {
+        if (vk >= '0' && vk <= '9' || vk >= 'A' && vk <= 'Z') return ((char)vk).ToString();
+        if (vk >= 0x60 && vk <= 0x69) return "Numpad " + (vk - 0x60);
+        return vk switch
+        {
+            0x25 => "Left arrow", 0x26 => "Up arrow", 0x27 => "Right arrow", 0x28 => "Down arrow",
+            0x0D => "Enter", 0x08 => "Backspace", 0x20 => "Space", 0x09 => "Tab",
+            0xA0 => "Left Shift", 0xA1 => "Right Shift", 0xA2 => "Left Ctrl", 0xA3 => "Right Ctrl", 0xA4 => "Left Alt", 0xA5 => "Right Alt",
+            0xBC => ",", 0xBE => ".", 0xBF => "/", 0xBA => ";", 0xDE => "'", 0xDB => "[", 0xDD => "]", 0xDC => "\\", 0xC0 => "`",
+            _ => System.Windows.Input.KeyInterop.KeyFromVirtualKey(vk) is var k && k != System.Windows.Input.Key.None ? k.ToString() : "key " + vk,
+        };
+    }
+
+    /// <summary>True once the Controls page has saved anything: the game then reads the file.</summary>
+    public static bool Saved => System.IO.File.Exists(File);
 
     /// <summary>
     /// Wheel configuration options passed to the game's input system: rotation degrees, steering lock/boost,
@@ -113,11 +163,13 @@ public static class ControlMap
     public static List<Binding> Load()
     {
         var list = new List<Binding>();
-        if (!System.IO.File.Exists(File)) return list;
+        if (!System.IO.File.Exists(File)) return DefaultKeys();
+        bool keys = false;   // a file from before the keyboard page has no keyboard layout: the built-in one
         foreach (var raw in System.IO.File.ReadAllLines(File))
         {
             var line = raw.Split('#')[0];
             var f = line.Split('|').Select(x => x.Trim()).ToArray();
+            if (f.Length >= 3 && f[0] == "option" && f[1] == "keys") keys = f[2] != "0";
             if (f.Length < 4 || f[0] == "option") continue;
             double D(int i, double def) => f.Length > i && double.TryParse(f[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : def;
             list.Add(new Binding
@@ -126,6 +178,7 @@ public static class ControlMap
                 Invert = f.Length > 4 && f[4] == "1", Deadzone = D(5, 0), Low = D(6, 0), High = D(7, 65535),
             });
         }
+        if (!keys) { list.RemoveAll(b => b.IsKey); list.AddRange(DefaultKeys()); }
         return list;
     }
 
@@ -142,6 +195,7 @@ public static class ControlMap
         lines.AddRange(list.Select(b => string.Join(" | ", b.Control, b.Device, b.Kind, b.Index, b.Invert ? 1 : 0,
             b.Deadzone.ToString("0.###", CultureInfo.InvariantCulture), b.Low.ToString("0", CultureInfo.InvariantCulture), b.High.ToString("0", CultureInfo.InvariantCulture))));
         string N(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+        lines.Add("option | keys | 1");   // the keyboard layout is this file's "keyboard | key" lines (Windows virtual key codes)
         lines.Add($"option | wheel_degrees | {N(o.WheelDegrees)}");
         lines.Add($"option | steer_lock | {N(o.SteerLock)}");
         lines.Add($"option | steer_boost | {N(o.SteerBoost)}");

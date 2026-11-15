@@ -12,6 +12,10 @@
  * controls: lx ly rx ry (sticks, full range), lx- lx+ ly- ly+ ... (one direction), l2 r2 (analog pressure + button),
  * cross circle square triangle l1 r1 start select up down left right l3 r3.
  *
+ * The keyboard: "control | keyboard | key | <Windows virtual key code>" binds a key to any of those controls
+ * (e.g. "cross | keyboard | key | 90" for Z; several keys can share a control). "option | keys | 1" says the file
+ * holds the whole keyboard layout, and the built-in one (host.c) is then switched off.
+ *
  * Options (one per line, "option | name | value"):
  *     wheel_degrees  the wheel's rotation (e.g. 900) and steer_lock  the rotation that gives full lock in the game
  *                    (e.g. 270): steering on lx is scaled by wheel_degrees / steer_lock; steer_boost (0-100) starts
@@ -33,9 +37,11 @@ static struct { float wheel_degrees, steer_lock, ffb, ffb_spring, ffb_damper; un
 static void ffb_start(void);
 
 typedef struct { char control[16]; unsigned vid, pid; int joy_index; int kind, index, invert; float dead; float lo, hi; } bind_t;
-enum { K_AXIS, K_BUTTON, K_POV };
-static bind_t binds[128];
+enum { K_AXIS, K_BUTTON, K_POV, K_KEY };
+static bind_t binds[160];
 static int nbinds = -1;
+static int custom_keys;   /* option keys: the keyboard layout comes from the file */
+int mnr_key_down(int vk);   /* host.c: the key is down and the game's window has the keyboard */
 static struct { int present, xinput; unsigned vid, pid; JOYINFOEX st; } joys[16];
 static DWORD last_scan;
 
@@ -52,7 +58,7 @@ static void load_config(void) {
     FILE *f = fopen(path, "r");
     if (!f) { printf("[input] can't open %s\n", path); return; }
     char line[512];
-    while (fgets(line, sizeof line, f) && nbinds < 128) {
+    while (fgets(line, sizeof line, f) && nbinds < 160) {
         char *hash = strchr(line, '#'); if (hash) *hash = 0;
         char *field[8]; int n = 0; char *p = line;
         while (n < 8) { field[n++] = p; char *bar = strchr(p, '|'); if (!bar) break; *bar = 0; p = bar + 1; }
@@ -66,6 +72,7 @@ static void load_config(void) {
             else if (!strcmp(k, "ffb_spring")) opt.ffb_spring = v;
             else if (!strcmp(k, "ffb_damper")) opt.ffb_damper = v;
             else if (!strcmp(k, "ffb_device")) sscanf(field[2], "%x:%x", &opt.ffb_vid, &opt.ffb_pid);
+            else if (!strcmp(k, "keys")) custom_keys = v > 0;
             continue;
         }
         if (n < 4) continue;
@@ -73,11 +80,13 @@ static void load_config(void) {
         memset(b, 0, sizeof *b);
         snprintf(b->control, sizeof b->control, "%s", field[0]);
         b->joy_index = -1;
-        if (field[1][0] == '#') b->joy_index = atoi(field[1] + 1);
-        else if (sscanf(field[1], "%x:%x", &b->vid, &b->pid) != 2) continue;
-        b->kind = !strcmp(field[2], "axis") ? K_AXIS : !strcmp(field[2], "button") ? K_BUTTON : !strcmp(field[2], "pov") ? K_POV : -1;
+        b->kind = !strcmp(field[2], "axis") ? K_AXIS : !strcmp(field[2], "button") ? K_BUTTON : !strcmp(field[2], "pov") ? K_POV : !strcmp(field[2], "key") ? K_KEY : -1;
         if (b->kind < 0) continue;
+        if (b->kind == K_KEY) ;   /* the keyboard: no device */
+        else if (field[1][0] == '#') b->joy_index = atoi(field[1] + 1);
+        else if (sscanf(field[1], "%x:%x", &b->vid, &b->pid) != 2) continue;
         b->index = atoi(field[3]);
+        if (b->kind == K_KEY && (b->index <= 0 || b->index > 255)) continue;
         b->invert = n > 4 ? atoi(field[4]) : 0;
         b->dead = n > 5 ? (float)atof(field[5]) : 0;
         b->lo = n > 6 ? (float)atof(field[6]) : 0;
@@ -86,7 +95,7 @@ static void load_config(void) {
         nbinds++;
     }
     fclose(f);
-    printf("[input] %d control bindings from %s\n", nbinds, path);
+    printf("[input] %d control bindings from %s%s\n", nbinds, path, custom_keys ? " (with the keyboard layout)" : "");
     if (!opt.ffb_vid) for (int i = 0; i < nbinds; i++) if (!strcmp(binds[i].control, "lx") && binds[i].vid) { opt.ffb_vid = binds[i].vid; opt.ffb_pid = binds[i].pid; break; }
     if (opt.wheel_degrees > 0 && opt.steer_lock > 0) printf("[input] wheel %.0f degrees, full lock at %.0f\n", opt.wheel_degrees, opt.steer_lock);
     if (opt.ffb > 0) ffb_start();
@@ -125,6 +134,7 @@ static void scan(void) {
 }
 
 static int joy_for(const bind_t *b) {
+    if (b->kind == K_KEY) return -1;
     if (b->joy_index >= 0) return b->joy_index < 16 && joys[b->joy_index].present ? b->joy_index : -1;
     for (int id = 0; id < 16; id++) if (joys[id].present && joys[id].vid == b->vid && joys[id].pid == b->pid) return id;
     return -1;
@@ -132,6 +142,7 @@ static int joy_for(const bind_t *b) {
 
 /* the bound control's value in [0, 1] (buttons: 0 or 1) */
 static int value(const bind_t *b, float *v) {
+    if (b->kind == K_KEY) { *v = mnr_key_down(b->index) ? 1.0f : 0.0f; return 1; }
     int id = joy_for(b);
     if (id < 0) return 0;
     const JOYINFOEX *s = &joys[id].st;
@@ -163,6 +174,10 @@ int input_bound_present(void) {
     if (!last_scan || GetTickCount() - last_scan > 2000) scan();
     for (int i = 0; i < nbinds; i++) { int id = joy_for(&binds[i]); if (id >= 0 && !joys[id].xinput) return 1; }
     return 0;
+}
+int input_custom_keys(void) {
+    if (nbinds < 0) load_config();
+    return custom_keys;
 }
 int input_read(input_state_t *out) {
     memset(out, 0, sizeof *out);

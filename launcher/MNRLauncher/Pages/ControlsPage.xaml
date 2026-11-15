@@ -1,10 +1,22 @@
 <UserControl x:Class="MNRLauncher.Pages.ControlsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <DataTemplate x:Key="BindRow">
+            <Border Background="{DynamicResource Panel}" CornerRadius="3" Padding="10,7" Margin="0,0,0,5">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Content="Clear" Tag="{Binding}" Click="Clear_Click" Margin="6,0,0,0" Padding="10,3"/>
+                    <Button DockPanel.Dock="Right" Content="Bind" Tag="{Binding}" Click="Bind_Click" Margin="6,0,0,0" Padding="12,3"/>
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding Def.Name}" Width="205" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Def.Name}"/>
+                    <TextBlock Text="{Binding Text}" Style="{StaticResource Sub}" TextWrapping="NoWrap" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
+                </DockPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
     <DockPanel Margin="32,28">
         <StackPanel DockPanel.Dock="Top">
             <TextBlock Text="Controls" Style="{StaticResource H1}"/>
-            <TextBlock Style="{StaticResource Sub}" Text="Wheels, pedals, sticks and button boxes. Click Bind next to a control, then move or press what you want for it: for the steering turn the wheel to the RIGHT; for a pedal press it all the way down. Several devices can be used together (e.g. a wheel with separate pedals). Xbox controllers work without setup."/>
+            <TextBlock Style="{StaticResource Sub}" Text="Keyboard, wheels, pedals, sticks and button boxes. Click Bind next to a control, then press the key, or move or press what you want for it: for the steering turn the wheel to the RIGHT; for a pedal press it all the way down. Several devices can be used together (e.g. a wheel with separate pedals). Xbox controllers work without setup."/>
         </StackPanel>
         <Grid Margin="0,14,0,0">
             <Grid.ColumnDefinitions>
@@ -54,28 +66,23 @@
                 </StackPanel>
             </ScrollViewer>
             <DockPanel Grid.Column="2">
-                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                    <Button DockPanel.Dock="Right" Content="Clear all" Click="ClearAll_Click" Margin="0"/>
-                    <TextBlock Text="BINDINGS" Style="{StaticResource H2}" Margin="0" VerticalAlignment="Center"/>
-                </DockPanel>
                 <Border DockPanel.Dock="Top" x:Name="Listening" Background="{DynamicResource Accent}" CornerRadius="3" Padding="10,6" Margin="0,0,0,8" Visibility="Collapsed">
                     <TextBlock x:Name="ListeningText" FontWeight="SemiBold"/>
                 </Border>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl x:Name="Rows">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource Panel}" CornerRadius="3" Padding="10,7" Margin="0,0,0,5">
-                                    <DockPanel>
-                                        <Button DockPanel.Dock="Right" Content="Clear" Tag="{Binding}" Click="Clear_Click" Margin="6,0,0,0" Padding="10,3"/>
-                                        <Button DockPanel.Dock="Right" Content="Bind" Tag="{Binding}" Click="Bind_Click" Margin="6,0,0,0" Padding="12,3"/>
-                                        <TextBlock DockPanel.Dock="Left" Text="{Binding Def.Name}" Width="230" VerticalAlignment="Center"/>
-                                        <TextBlock Text="{Binding Text}" Style="{StaticResource Sub}" TextWrapping="NoWrap" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text}"/>
-                                    </DockPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <StackPanel Margin="0,0,8,0">
+                        <DockPanel Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Right" Content="Reset keys" Click="ResetKeys_Click" Margin="0"/>
+                            <TextBlock Text="KEYBOARD" Style="{StaticResource H2}" Margin="0" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Sub}" Margin="0,0,0,8" Text="Click Bind, then press the key. The game window keeps F8, F9, F11, - and = for itself, and T for push to talk."/>
+                        <ItemsControl x:Name="KeyRows" ItemTemplate="{StaticResource BindRow}"/>
+                        <DockPanel Margin="0,14,0,6">
+                            <Button DockPanel.Dock="Right" Content="Clear all" Click="ClearAll_Click" Margin="0"/>
+                            <TextBlock Text="WHEELS, PEDALS AND OTHER CONTROLLERS" Style="{StaticResource H2}" Margin="0" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <ItemsControl x:Name="Rows" ItemTemplate="{StaticResource BindRow}"/>
+                    </StackPanel>
                 </ScrollViewer>
             </DockPanel>
         </Grid>

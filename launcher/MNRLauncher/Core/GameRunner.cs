@@ -143,7 +143,7 @@ public static class GameRunner
         if (s.Resolution > 720) env["MNR_RESOLUTION"] = s.Resolution.ToString();   // graphics (rsx_d3d.c)
         if (s.Anisotropy > 1) env["MNR_ANISO"] = s.Anisotropy.ToString();
         if (s.Fxaa) env["MNR_FXAA"] = "1";
-        if (ControlMap.Load().Count > 0) env["MNR_INPUT_CONFIG"] = ControlMap.File;   // wheels, pedals, ...
+        if (ControlMap.Saved) env["MNR_INPUT_CONFIG"] = ControlMap.File;   // keyboard layout, wheels, pedals, ...
         var (mods, patches) = ModManager.Environment(enabledMods);
         if (mods.Length > 0) env["MNR_MODS"] = mods;
         if (s.UnlockAllTracks) env["MNR_UNLOCK_TRACKS"] = "1";   // the game marks every career track unlocked (host.c)

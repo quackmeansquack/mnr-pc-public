@@ -8,4 +8,5 @@ typedef struct {
 } input_state_t;
 
 int input_read(input_state_t *out);   /* 1 when a bound controller is connected */
+int input_custom_keys(void);   /* the file holds the keyboard layout: the built-in keys are off */
 int input_bound_present(void);   /* a bound controller other than an Xbox one is connected (it is player 1) */

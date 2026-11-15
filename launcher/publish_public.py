@@ -87,7 +87,7 @@ def push_in_place(repo, tok, version, notes):
 
 
 def push_source(repo, tok, version, notes):
-    if os.path.isdir(os.path.join(ROOT, '.git')):
+    if os.path.exists(os.path.join(ROOT, '.git')):   # (a file in a git worktree)
         return push_in_place(repo, tok, version, notes)
     url = f'https://x-access-token:{tok}@github.com/{repo}.git'
     if not os.path.isdir(os.path.join(CLONE, '.git')):

@@ -3359,13 +3359,15 @@ static void pad_get_data(ctx_t *c) {   /* (port, CellPadData {s32 len; u16 butto
     static int autopress = -1;
     if (autopress < 0) { const char *e = getenv("MNR_AUTOPRESS"); autopress = e && *e == '1'; }
     unsigned d1 = 0, d2 = 0;
-    if (key(VK_LEFT)) d1 |= 0x80;  if (key(VK_DOWN)) d1 |= 0x40;
-    if (key(VK_RIGHT)) d1 |= 0x20; if (key(VK_UP)) d1 |= 0x10;
-    if (key(VK_RETURN)) d1 |= 0x08; if (key(VK_BACK)) d1 |= 0x01;
-    if (key('A')) d2 |= 0x80; if (key('Z') || key(VK_SPACE)) d2 |= 0x40;
-    if (key('X')) d2 |= 0x20; if (key('S')) d2 |= 0x10;
-    if (key('W')) d2 |= 0x08; if (key('Q')) d2 |= 0x04;
-    if (key('2')) d2 |= 0x02; if (key('1')) d2 |= 0x01;
+    if (!input_custom_keys()) {   /* the built-in keyboard layout; the launcher's Controls page replaces it (input.c) */
+        if (key(VK_LEFT)) d1 |= 0x80;  if (key(VK_DOWN)) d1 |= 0x40;
+        if (key(VK_RIGHT)) d1 |= 0x20; if (key(VK_UP)) d1 |= 0x10;
+        if (key(VK_RETURN)) d1 |= 0x08; if (key(VK_BACK)) d1 |= 0x01;
+        if (key('A')) d2 |= 0x80; if (key('Z') || key(VK_SPACE)) d2 |= 0x40;
+        if (key('X')) d2 |= 0x20; if (key('S')) d2 |= 0x10;
+        if (key('W')) d2 |= 0x08; if (key('Q')) d2 |= 0x04;
+        if (key('2')) d2 |= 0x02; if (key('1')) d2 |= 0x01;
+    }
     static long autodrive = -2;
     if (autodrive == -2) { const char *e = getenv("MNR_AUTODRIVE"); autodrive = e ? atol(e) : -1; }
     static int noskip = -1; if (noskip < 0) noskip = getenv("MNR_AUTOPRESS_NOSKIP") != NULL;

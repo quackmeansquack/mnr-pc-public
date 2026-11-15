@@ -15,6 +15,7 @@ public partial class ControlsPage : UserControl, IRefresh
     {
         public ControlDef Def { get; init; } = null!;
         public string Text { get; set; } = "";
+        public bool Key { get; init; }   // a keyboard row
     }
 
     List<Joystick.Device> devices = new();
@@ -47,7 +48,13 @@ public partial class ControlsPage : UserControl, IRefresh
         timer.Tick += Tick;
         Loaded += (_, _) => timer.Start();
         Unloaded += (_, _) => { timer.Stop(); StopListening(null); };
-        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape && listening != null) StopListening("Cancelled."); };
+        PreviewKeyDown += (_, e) =>
+        {
+            if (listening == null) return;
+            e.Handled = true;   // (the key must not also click the focused button or move the focus)
+            if (e.Key == Key.Escape) { StopListening("Cancelled."); return; }
+            if (listening.Key && !e.IsRepeat) BindKey(e);
+        };
     }
 
     /// <summary>Refreshes the controls page: lists available joysticks, loads control bindings, and displays wheel options.</summary>
@@ -68,9 +75,39 @@ public partial class ControlsPage : UserControl, IRefresh
     {
         Rows.ItemsSource = ControlMap.Controls.Select(d =>
         {
-            var b = binds.Where(x => x.Control == d.Id || x.Control.StartsWith(d.Id + "-") || x.Control.StartsWith(d.Id + "+")).ToList();
+            var b = binds.Where(x => !x.IsKey && (x.Control == d.Id || x.Control.StartsWith(d.Id + "-") || x.Control.StartsWith(d.Id + "+"))).ToList();
             return new Row { Def = d, Text = b.Count == 0 ? "not bound" : string.Join("   +   ", b.Select(x => x.Describe(devices))) };
         }).ToList();
+        KeyRows.ItemsSource = ControlMap.KeyControls.Select(c =>
+        {
+            var b = binds.Where(x => x.IsKey && x.Control == c.Id).ToList();
+            return new Row { Def = new ControlDef(c.Id, c.Name, false, "Keyboard"), Key = true, Text = b.Count == 0 ? "not bound" : string.Join(" / ", b.Select(x => x.Describe(devices))) };
+        }).ToList();
+    }
+
+    /// <summary>The key pressed while a keyboard row listens becomes that control's key (and leaves any other control).</summary>
+    void BindKey(KeyEventArgs e)
+    {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key == Key.ImeProcessed ? e.ImeProcessedKey : e.Key;
+        int vk = KeyInterop.VirtualKeyFromKey(key);
+        if (vk <= 0 || vk > 255) return;
+        if (vk is 0x77 or 0x78 or 0x7A or 0xBD or 0xBB or 0x6D or 0x6B)   // F8 F9 F11 - = numpad - +
+        { StopListening($"{ControlMap.KeyName(vk)} is used by the game window; pick another key."); return; }
+        var r = listening!;
+        binds.RemoveAll(x => x.IsKey && (x.Control == r.Def.Id || x.Index == vk));
+        binds.Add(new Binding { Control = r.Def.Id, Device = "keyboard", Kind = "key", Index = vk });
+        ControlMap.Save(binds);
+        StopListening(null);
+        ShowRows();
+    }
+
+    /// <summary>Puts the keyboard back to the layout the game starts with.</summary>
+    void ResetKeys_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("Put the keyboard back to its default keys?", "Controls", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        StopListening(null);
+        binds.RemoveAll(x => x.IsKey); binds.AddRange(ControlMap.DefaultKeys());
+        ControlMap.Save(binds); ShowRows();
     }
 
     /// <summary>Rescans for available joysticks and reloads the controls page.</summary>
@@ -108,6 +145,13 @@ public partial class ControlsPage : UserControl, IRefresh
     void Bind_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not Row r) return;
+        if (r.Key)
+        {
+            listening = r; moving = null; listenStart = DateTime.Now;
+            ListeningText.Text = $"{r.Def.Name}: press the key…   (Esc cancels)";
+            Listening.Visibility = Visibility.Visible;
+            return;
+        }
         devices = Joystick.List();
         if (devices.Count == 0) { MessageBox.Show("No game controllers found. Connect the wheel or pedals and click Refresh list.", "Controls"); return; }
         baseline.Clear();
@@ -124,7 +168,8 @@ public partial class ControlsPage : UserControl, IRefresh
     void Listen()
     {
         var r = listening!;
-        if ((DateTime.Now - listenStart).TotalSeconds > 12) { StopListening("Nothing moved; try again."); return; }
+        if ((DateTime.Now - listenStart).TotalSeconds > 12) { StopListening(r.Key ? "No key pressed; try again." : "Nothing moved; try again."); return; }
+        if (r.Key) return;   // (the key arrives in PreviewKeyDown)
         foreach (var d in devices)
         {
             if (!baseline.TryGetValue(d.Id, out var b) || !Joystick.Read(d.Id, out var st)) continue;
@@ -171,7 +216,7 @@ public partial class ControlsPage : UserControl, IRefresh
     /// <summary>Adds a binding to the list, saves it, and refreshes the UI rows.</summary>
     void Add(Binding b)
     {
-        binds.RemoveAll(x => x.Control == b.Control);
+        binds.RemoveAll(x => !x.IsKey && x.Control == b.Control);
         binds.Add(b);
         ControlMap.Save(binds);
         StopListening(null);
@@ -193,14 +238,15 @@ public partial class ControlsPage : UserControl, IRefresh
     void Clear_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as Button)?.Tag is not Row r) return;
-        binds.RemoveAll(x => x.Control == r.Def.Id || x.Control.StartsWith(r.Def.Id + "-") || x.Control.StartsWith(r.Def.Id + "+"));
+        if (r.Key) binds.RemoveAll(x => x.IsKey && x.Control == r.Def.Id);
+        else binds.RemoveAll(x => !x.IsKey && (x.Control == r.Def.Id || x.Control.StartsWith(r.Def.Id + "-") || x.Control.StartsWith(r.Def.Id + "+")));
         ControlMap.Save(binds); ShowRows();
     }
 
     /// <summary>Clears all control bindings after user confirmation.</summary>
     void ClearAll_Click(object sender, RoutedEventArgs e)
     {
-        if (binds.Count == 0 || MessageBox.Show("Remove all bindings?", "Controls", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        binds.Clear(); ControlMap.Save(binds); ShowRows();
+        if (binds.All(x => x.IsKey) || MessageBox.Show("Remove all wheel, pedal and controller bindings? (The keyboard keeps its keys.)", "Controls", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        binds.RemoveAll(x => !x.IsKey); ControlMap.Save(binds); ShowRows();
     }
 }
