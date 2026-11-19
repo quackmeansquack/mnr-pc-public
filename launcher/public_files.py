@@ -6,6 +6,7 @@ server. Used by publish_public.py: runtime_files() for the release's runtime pac
 import glob, os, shutil, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # MNR
+HAND_MAINTAINED = 'server'   # the repository's server/ folder: kept by hand, never in a release, never touched by publishing
 
 # the runtime pack: what the launcher downloads and builds the game from (paths relative to MNR, as installed)
 def runtime_files():

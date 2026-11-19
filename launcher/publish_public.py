@@ -8,7 +8,8 @@
 2. A release: runtime.zip (public_files.runtime_files(), the files the launcher installs and builds the game from),
    the public-edition launcher (MNRLauncher.exe, built with -p:Edition=Public) and manifest.json, in the same format as
    the private releases, so the launcher's updater reads it unchanged.
-Nothing else ever goes up: no game files, no built game, no firmware, no saves. The repository is created private
+Nothing else ever goes up: no game files, no built game, no firmware, no saves. The repository's server/ folder (the
+server patch and its guide) is maintained by hand: this script never adds, changes or deletes anything in it. The repository is created private
 when it doesn't exist; make it public on GitHub (Settings > General > Danger zone) once testing is done.
 Token: as publish_release.py (GITHUB_TOKEN, `gh auth token`, or %APPDATA%\\MNRLauncher\\publish_token.txt).
 """
@@ -74,8 +75,8 @@ def push_in_place(repo, tok, version, notes):
             open(os.path.join(ROOT, name), 'w', newline='\n').write(text)
     want = public_files.source_files() + ['README.md', '.gitignore']
     g('add', '--', *want)
-    g('add', '-u')   # changed or deleted files already in the repository
-    extra = [l[3:] for l in g('status', '--porcelain').splitlines() if l.startswith('??')]
+    g('add', '-u', '--', '.', f':(exclude){public_files.HAND_MAINTAINED}')   # changed or deleted files already in the repository
+    extra = [l[3:] for l in g('status', '--porcelain', '--', '.', f':(exclude){public_files.HAND_MAINTAINED}').splitlines() if l.startswith('??')]
     if extra:
         print('not in the repository (add with git if they belong there):\n  ' + '\n  '.join(extra))
     if not g('diff', '--cached', '--name-only'):
@@ -96,8 +97,8 @@ def push_source(repo, tok, version, notes):
     git('remote', 'set-url', 'origin', url)
     git('pull', '--ff-only', check=False)
     want = set(public_files.source_files())
-    for d, dirs, fs in os.walk(CLONE):   # files no longer published leave the repository
-        dirs[:] = [x for x in dirs if x != '.git']
+    for d, dirs, fs in os.walk(CLONE):   # files no longer published leave the repository (server/ is not ours to touch)
+        dirs[:] = [x for x in dirs if x != '.git' and not (d == CLONE and x == public_files.HAND_MAINTAINED)]
         for f in fs:
             rel = os.path.relpath(os.path.join(d, f), CLONE).replace('\\', '/')
             if rel not in want and rel not in ('README.md', '.gitignore'):

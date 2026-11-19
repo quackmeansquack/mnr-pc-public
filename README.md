@@ -16,3 +16,5 @@ Download MNRLauncher.exe from the latest release and run it.
 - `re/recomp`: the PC runtime (C) and the recompiler (`ppu2c.py`, `spu2c.py`, `build.py`)
 - `re/functions_v111.tsv`: the game executable's function list; `re/mnr_race.profdata`: the build's play profile
 - `patches/patches_v111.txt`: data patches
+- `server/`: for people who host an online server: the PLGarage patch and how to set the server up
+  ([server/README.md](server/README.md)). The launcher never downloads or changes these files.
