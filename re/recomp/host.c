@@ -3090,7 +3090,10 @@ int spurs_send_event(uint32_t port, uint32_t data0, uint32_t data1) {
  * SPU (jobchain_job), and every other command first waits for them. Our own attribute layout (the game
  * never reads it back): +0 command list, +4 job descriptor size, +8 max descriptor size, +12 max contention. */
 typedef struct { uint32_t chain, pc, desc_size, max_desc, contention; uint32_t stack[16]; int sp; HANDLE wake; volatile int running;
-                 volatile long launched, done; } jobchain_t;
+                 volatile long launched, done;
+                 volatile long passes, at_guard;   /* guards passed; 1 while the thread waits at a guard (lockstep) */
+                 SRWLOCK guard_lock;               /* a guard's count: notifications and the chain's reset after passing */
+                 struct { uint32_t guard; long count; } early[8]; } jobchain_t;   /* notifications that came while a guard's count was 0 */
 static jobchain_t jobchains[16];
 static int njobchains;
 static jobchain_t *jobchain_find(uint32_t chain) {
@@ -3123,17 +3126,77 @@ static void spurs_jc_guard_init(ctx_t *c) {   /* (chain, guard, notifyCount, req
     st_u32(g, ARG32(2)); st_u32(g + 4, ARG32(2)); st_u32(g + 8, ARG32(4)); st_u32(g + 12, ARG32(0));
     RET(0);
 }
+/* Lockstep with the chain. Wwise's audio thread fills in the next batch of mixer jobs and then opens the guard in
+ * front of them. On the PS3 the mixer had an SPU to itself and always finished a batch long before the next one
+ * was filled in, and Wwise counts on that: it writes the next batch into the same job descriptors. Here the chain
+ * shares the CPU with the game, and when it fell behind it ran jobs whose descriptors were already being
+ * rewritten: the mixer halted on a null pointer (heqi at +0x33c8 of job 0x00e93900) and the audio thread crashed
+ * on the garbage soon after (2026-11-25, a hidden race; also 2026-11-06). So the thread that opens a guard waits
+ * here until the chain has run that batch and stands at its next guard; it then fills in the next batch while
+ * nothing reads it. MNR_JOBCHAIN_LOCKSTEP=0 turns it off (tests). */
+static struct { long batches, waited; double longest_ms, total_ms; DWORD since; } lockstep_stats;
+static void lockstep_wait(jobchain_t *j, long passes_before) {
+    LARGE_INTEGER f, t0, t; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
+    int waited = 0;
+    for (;;) {
+        if (!j->running) break;
+        if (j->passes > passes_before && j->at_guard) break;
+        QueryPerformanceCounter(&t);
+        if ((t.QuadPart - t0.QuadPart) * 1000 / f.QuadPart >= 250) {   /* never hang the game on it */
+            static volatile long timeouts;
+            if (InterlockedIncrement(&timeouts) <= 10) printf("[jobchain] lockstep: the chain did not reach its next guard in 250 ms\n");
+            break;
+        }
+        waited = 1;
+        long at = j->at_guard;
+        if (!at) WaitOnAddress((volatile void *)&j->at_guard, &at, sizeof at, 1);
+        else SwitchToThread();   /* at the old guard still: it is about to pass */
+    }
+    QueryPerformanceCounter(&t);
+    double ms = (double)(t.QuadPart - t0.QuadPart) * 1000 / f.QuadPart;
+    lockstep_stats.batches++;   /* one line every 30 s while the audio thread had to wait: how far behind the mixer was */
+    if (waited) { lockstep_stats.waited++; lockstep_stats.total_ms += ms; if (ms > lockstep_stats.longest_ms) lockstep_stats.longest_ms = ms; }
+    DWORD tick = GetTickCount();
+    if (!lockstep_stats.since) lockstep_stats.since = tick;
+    if (tick - lockstep_stats.since >= 30000) {
+        if (lockstep_stats.waited)
+            printf("[jobchain] last 30 s: the audio thread waited for the mixer at %ld of %ld batches, %.0f ms in all, longest %.1f ms\n",
+                   lockstep_stats.waited, lockstep_stats.batches, lockstep_stats.total_ms, lockstep_stats.longest_ms);
+        memset(&lockstep_stats, 0, sizeof lockstep_stats);
+        lockstep_stats.since = tick;
+    }
+}
 static void spurs_jc_guard_notify(ctx_t *c) {   /* (guard) */
     uint32_t g = ARG32(0);
     tl_mark("jobchain: guard notify", (uint32_t)c->lr);
+    static int lockstep = -1;
+    if (lockstep < 0) { const char *e = getenv("MNR_JOBCHAIN_LOCKSTEP"); lockstep = !(e && *e == '0'); }   /* MNR_JOBCHAIN_LOCKSTEP: =0 the thread that opens a job chain's guard does not wait for the chain to run that batch (tests; the default waits) */
+    jobchain_t *j = jobchain_find(ld_u32(g + 12));
+    long passes_before = j ? j->passes : 0;   /* (read before the guard can open) */
     volatile LONG *n = (volatile LONG *)gp(g);   /* big-endian in guest memory: update under the chain's view */
+    int opened = 0;
+    if (j) AcquireSRWLockExclusive(&j->guard_lock);
     for (;;) {
         LONG old = *n; uint32_t v = __builtin_bswap32((uint32_t)old);
-        if (!v) break;
-        if (InterlockedCompareExchange(n, (LONG)__builtin_bswap32(v - 1), old) == old) break;
+        if (!v) {
+            /* the guard is open already: the chain has not got back to it since the last notification. Dropping this
+             * one left the chain waiting at the guard for a notification that had come, while the audio thread
+             * waited for the chain's jobs: the game froze at a race start (2026-11-25, on 4 cores). Keep it for
+             * the chain's next pass instead (the GUARD command in jobchain_thread). */
+            if (j) {
+                int i = 0;
+                while (i < 8 && j->early[i].guard && j->early[i].guard != g) i++;
+                if (i < 8) { j->early[i].guard = g; j->early[i].count++; }
+                static volatile long noted;
+                if (InterlockedIncrement(&noted) <= 10) printf("[jobchain] guard 0x%08x notified while open: kept for the chain's next pass\n", g);
+            }
+            break;
+        }
+        if (InterlockedCompareExchange(n, (LONG)__builtin_bswap32(v - 1), old) == old) { opened = v == 1; break; }
     }
-    jobchain_t *j = jobchain_find(ld_u32(g + 12));
+    if (j) ReleaseSRWLockExclusive(&j->guard_lock);
     if (j) SetEvent(j->wake);
+    if (j && opened && lockstep) lockstep_wait(j, passes_before);
     RET(0);
 }
 static void spurs_jc_guard_reset(ctx_t *c) { uint32_t g = ARG32(0); st_u32(g, ld_u32(g + 4)); RET(0); }
@@ -3189,9 +3252,18 @@ static DWORD WINAPI jobchain_thread(void *p) {
             case 1: {   /* GUARD: wait until the PPU has notified it often enough */
                 uint32_t g = (uint32_t)cmd & ~0x7Fu;
                 LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
+                j->at_guard = 1; WakeByAddressAll((void *)&j->at_guard);   /* (lockstep: the batch before this guard is done) */
                 while (j->running && ld_u32(g)) WaitForSingleObject(j->wake, 5);
                 QueryPerformanceCounter(&t1); tl_rec("jobchain: guard wait", t0.QuadPart, t1.QuadPart, 0, g);
-                if (ld_u32(g + 8)) st_u32(g, ld_u32(g + 4));
+                if (ld_u32(g + 8)) {   /* auto reset; a notification that came early counts for this next round */
+                    AcquireSRWLockExclusive(&j->guard_lock);
+                    uint32_t count = ld_u32(g + 4);
+                    for (int i = 0; i < 8; i++)
+                        if (j->early[i].guard == g && j->early[i].count > 0 && count > 0) { j->early[i].count--; count--; }
+                    st_u32(g, count);
+                    ReleaseSRWLockExclusive(&j->guard_lock);
+                }
+                j->at_guard = 0; InterlockedIncrement(&j->passes);
                 j->pc += 8; break;
             }
             case 14: j->pc = j->sp ? j->stack[--j->sp] : j->pc + 8; break;   /* RET */
@@ -4781,6 +4853,32 @@ static void apply_patch_file(const char *path) {
     }
     fclose(f);
     printf("[patch] %d patch%s from %s\n", n, n == 1 ? "" : "es", path);
+}
+/* Low detail for slow PCs. The game loads its detail settings (LODPARAMETERS.LBIN) at boot, one set per screen
+ * layout: LODDefinitionsP1 for one player, P2 to P4 for split screen (0x554f28 -> 0xabd808 -> LuaReader::Open). The
+ * split-screen sets are the developers' own lower-detail settings: no shadows, no grass and ground cover, no motion
+ * blur, shorter draw distances. MNR_LOW_DETAIL makes the one-player set read as one of them. */
+void prehook_lod_detail(ctx_t *c) {   /* LuaReader::Open(reader, L, const char *table) */
+    static volatile int level = -1;
+    static volatile uint32_t name;   /* the replacement table's name, in guest memory */
+    if (level < 0) {
+        const char *e = getenv("MNR_LOW_DETAIL");   /* MNR_LOW_DETAIL: =1 one player draws with the game's two-player split-screen detail (no shadows, grass or motion blur, shorter draw distances), =2 with the three-player detail (lower still): for slow PCs */
+        int v = e ? atoi(e) : 0;
+        if (v < 0) v = 0;
+        if (v > 2) v = 2;
+        if (v) {
+            const char *table = v == 1 ? "LODDefinitionsP2" : "LODDefinitionsP3";
+            uint32_t n = (uint32_t)strlen(table) + 1;
+            name = gmalloc(n);
+            memcpy(gp(name), table, n);
+        }
+        MemoryBarrier();   /* (name before level, for another thread opening a table meanwhile) */
+        level = v;
+    }
+    uint32_t table = ARG32(2);
+    if (!level || !table || _stricmp((const char *)gp(table), "LODDefinitionsP1") != 0) return;
+    c->r[5] = name;
+    printf("[params] low detail: one player uses %s\n", (const char *)gp(name));
 }
 /* the game's debug printf (0x986314, an empty varargs function in retail): MNR_GAME_LOG=1 formats and
  * prints it. PPC64 varargs: argument k is in r3+k for k < 8, else in the parameter save area at r1+48+8k

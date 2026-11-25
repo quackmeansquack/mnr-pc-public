@@ -33,6 +33,9 @@ b04fc8 hook_havok_spu_wait
 # The game's debug printf (stubbed in the retail build, ~2900 call sites): MNR_GAME_LOG=1 prints it
 a59e0c prehook_game_printf pre
 
+# LuaReader::Open(reader, lua_State *, const char *table): MNR_LOW_DETAIL reads the split-screen detail set for one player
+1fc514 prehook_lod_detail pre
+
 # Render-queue geometry kernels (half the CPU time of a race): native versions in native.c, the originals kept
 # as f_<entry>_orig (MNR_NATIVE_VERIFY=1 compares, MNR_NATIVE_OFF=1 uses them)
 7c08f8 native_project_points native
